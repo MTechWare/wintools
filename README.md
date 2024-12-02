@@ -2,6 +2,24 @@
 
 A modern, automated Windows utility application that simplifies system monitoring and software management. Built with Python and tkinter, featuring an elegant Sun Valley theme and automated setup process.
 
+## 📸 Screenshots
+
+### System Monitoring
+![System Monitoring](screenshots/wintool_System.png)
+*Real-time CPU, Memory, and Disk monitoring with performance graphs*
+
+### Software Installation
+![Software Installation](screenshots/wintool_Install.png)
+*Easy software installation with parallel status checking and real-time updates*
+
+### Hardware Information
+![Hardware Information](screenshots/wintool_Hardware.png)
+*Detailed hardware monitoring and system information*
+
+### Windows Configuration
+![Windows Configuration](screenshots/wintool_Unattend.png)
+*Windows unattended installation configuration and system optimization tools*
+
 ## 🌟 Key Features
 
 ### 🔄 Automated Setup
