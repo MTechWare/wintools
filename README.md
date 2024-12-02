@@ -4,21 +4,19 @@ A modern, automated Windows utility application that simplifies system monitorin
 
 ## 📸 Screenshots
 
-### System Monitoring
-![System Monitoring](screenshots/wintool_System.png)
-*Real-time CPU, Memory, and Disk monitoring with performance graphs*
+<div align="center">
 
-### Software Installation
-![Software Installation](screenshots/wintool_Install.png)
-*Easy software installation with parallel status checking and real-time updates*
+| System Monitoring | Software Installation |
+|:---:|:---:|
+| ![System](screenshots/wintool_System.png) | ![Install](screenshots/wintool_Install.png) |
+| *Real-time CPU, Memory, and Disk monitoring* | *Easy software installation with parallel status checking* |
 
-### Hardware Information
-![Hardware Information](screenshots/wintool_Hardware.png)
-*Detailed hardware monitoring and system information*
+| Hardware Information | Windows Configuration |
+|:---:|:---:|
+| ![Hardware](screenshots/wintool_Hardware.png) | ![Config](screenshots/wintool_Unattend.png) |
+| *Detailed hardware monitoring and system info* | *Windows unattended installation configuration* |
 
-### Windows Configuration
-![Windows Configuration](screenshots/wintool_Unattend.png)
-*Windows unattended installation configuration and system optimization tools*
+</div>
 
 ## 🌟 Key Features
 
