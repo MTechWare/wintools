@@ -2,6 +2,11 @@
 
 A modern, automated Windows utility application that simplifies system monitoring and software management. Built with Python and tkinter, featuring an elegant Sun Valley theme and automated setup process.
 
+### One-Click Download and Run (Powershell) 
+```powershell
+Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/release/MTechWinTool.exe" -OutFile "MTechWinTool.exe"; Start-Process "MTechWinTool.exe
+```
+   
 ## 📸 Screenshots
 
 <div align="center">
