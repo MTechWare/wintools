@@ -4,7 +4,7 @@ A modern, automated Windows utility application that simplifies system monitorin
 
 ### One-Click Download and Run (Powershell) 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/release/MTechWinTool.exe" -OutFile "MTechWinTool.exe"; Start-Process "MTechWinTool.exe
+ Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/release/MTechWinTool.exe" -OutFile "MTechWinTool.exe"
 ```
 
 ## 🔧 Requirements
