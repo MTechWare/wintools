@@ -1,4 +1,4 @@
-# MTech WinTool (Beta 0.0.1a)
+# MTech WinTool (Beta 0.0.2a)
 
 A modern, automated Windows utility application that simplifies system monitoring and software management. Built with Python and tkinter, featuring an elegant Sun Valley theme and automated setup process.
 
@@ -18,24 +18,31 @@ A modern, automated Windows utility application that simplifies system monitorin
 
 </div>
 
+## 🔧 Requirements
+
+- Windows 10/11
+- Python 3.11 or higher
+- Winget package manager
+- Administrator privileges (for some features)
+
 ## 🌟 Key Features
 
 ### 🔄 Automated Setup
-- Auto-extracts and starts OpenHardwareMonitor
-- Auto-installs required Python packages
-- Auto-checks for winget availability
 - No manual configuration needed
+- Auto-checks for winget availability
+- Streamlined initialization process
 
 ### 🎨 Modern UI
 - Sleek Sun Valley theme with custom title bar
 - Responsive tabbed interface
 - Dark/Light mode support
+- System tray integration with minimize to tray
 - Real-time status updates
 - Thread-safe UI operations
 - Graceful exit handling
 
 ### 📊 System Monitoring
-- Real-time CPU usage and temperature
+- Real-time CPU usage
 - Memory usage tracking
 - Disk space monitoring
 - System information display
@@ -57,38 +64,26 @@ A modern, automated Windows utility application that simplifies system monitorin
 - System optimization tools
 - Hardware monitoring integration
 
-## 🔧 Requirements
-
-- Windows 10/11
-- Python 3.11 or higher
-- Winget package manager
-- Administrator privileges (for some features)
-
 ## 📥 Installation
 
-1. **Download the Latest Release**
-   - Download `MTechWinTool.exe` from the releases page
-   - Or build from source (see below)
+### Easy Install (Recommended)
 
-2. **Antivirus Notice**
-   - Some antivirus software may flag MTechWinTool as suspicious due to its system monitoring capabilities
-   - This is a false positive caused by:
-     * System monitoring features
-     * Administrative privileges requirement
-     * Windows registry access
-   - The application is completely safe and open source
-   - You can verify the safety by:
-     * Building from source yourself
-     * Checking the source code
-     * Using VirusTotal to scan the executable
+1. Download the latest release
+2. Run `Install.cmd` as administrator
+3. Wait for the installation to complete
+4. Launch MTech WinTool from the Start Menu
 
-3. **Run the Application**
-   - Double-click `MTechWinTool.exe`
-   - Grant administrator privileges when prompted
-   - If blocked by antivirus:
-     * Add MTechWinTool to your antivirus exclusions
-     * Or build from source (see below)
-   - The application will handle all setup automatically
+### Manual Installation
+
+1. Install Python 3.11 or higher
+2. Install required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Run the application:
+   ```bash
+   python main.py
+   ```
 
 ## 🛠️ Building from Source
 
@@ -109,29 +104,53 @@ A modern, automated Windows utility application that simplifies system monitorin
    ```
    The executable will be created in the `dist` directory.
 
-## 🔍 Technical Details
+## 🆕 What's New in Beta 0.0.2a
 
-### Core Components
-- **Threading**: Uses ThreadPoolExecutor for parallel operations
-- **UI**: Custom tkinter implementation with sv-ttk theme
-- **Monitoring**: Integration with OpenHardwareMonitor
-- **Package Management**: Winget integration
-- **Error Handling**: Comprehensive error handling and logging
+### Performance Improvements
+- Optimized software status checking with batch processing
+- Removed unnecessary dependency installation step
+- Improved overall application responsiveness
 
-### Performance Features
-- Parallel software status checking
-- Thread-safe UI updates
-- Optimized background monitoring
-- Graceful thread and process management
-- Efficient resource cleanup
+### Enhanced Software Management
+- Added silent mode for software uninstallation
+- Added timeout handling for installation/uninstallation
+- Improved software installation reliability
+- Better error messages and status display
+
+### Bug Fixes
+- Fixed software status refresh performance
+- Improved error handling during installation/uninstallation
+- Enhanced thread safety in UI updates
+
+## 🚀 Getting Started
+
+1. Download the latest release
+2. Run with administrator privileges
+3. Start managing your Windows system efficiently!
+
+## 💡 Tips
+
+- Use the system tray feature to keep the tool running in background
+- Check the detailed error messages if software installation fails
+- Utilize the category filters to find software quickly
+- Keep the tool updated for best performance
 
 ## 📝 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 🙏 Acknowledgments
+## 🤝 Contributing
 
-- Sun Valley theme for tkinter
-- OpenHardwareMonitor for system monitoring
-- Winget package manager
-- Python community for excellent libraries
+Feel free to:
+- Report issues
+- Suggest features
+- Submit pull requests
+
+## 📫 Contact
+
+- GitHub Issues: [Report a bug](https://github.com/MTechWare/wintools/issues)
+- Email: support@mtechware.com
+
+---
+
+Made with ❤️ by MTechWare

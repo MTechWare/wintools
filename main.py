@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
 MTechWinTool - Windows System Utility
-Version: Beta 0.0.1a
+Version: Beta 0.0.2a
 
 A modern Windows utility for system monitoring and software management.
 This application requires administrative privileges for certain operations:
 - System monitoring (CPU, Memory, Disk usage)
 - Software installation via winget
-- Hardware monitoring via OpenHardwareMonitor
+
+Changes in Beta 0.0.2a:
+- Improved software installation reliability
+- Added silent mode for software uninstallation
+- Added timeout handling for installation/uninstallation
+- Enhanced error messages and status display
+- Fixed software status refresh performance (major improvement)
+- Removed dependency installation step
+- Optimized batch processing for software status checks
 
 Note: This application may be flagged by antivirus software due to its
 system monitoring capabilities. This is a false positive. The source code
@@ -27,6 +35,7 @@ import win32api
 import win32con
 import os
 import sys
+import json
 from PIL import Image
 import threading
 import time
@@ -36,122 +45,517 @@ import requests
 from tqdm import tqdm
 import subprocess
 import webbrowser
-import json
 from bs4 import BeautifulSoup
 import zipfile
 import pkg_resources
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import pystray
+import ctypes
+
+class SingleInstance:
+    def __init__(self, name):
+        self.mutexname = name
+        self.mutex = None
+        
+    def __enter__(self):
+        try:
+            import win32event
+            import win32api
+            import winerror
+            import win32con
+            
+            self.mutex = win32event.CreateMutex(None, False, self.mutexname)
+            if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
+                win32api.CloseHandle(self.mutex)
+                return False
+            return True
+        except ImportError:
+            return True  # Skip mutex check if win32event is not available
+            
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.mutex:
+            try:
+                import win32api
+                win32api.CloseHandle(self.mutex)
+            except:
+                pass
+
+class InitializationUI:
+    def __init__(self):
+        self.root = None
+        self.progress_var = None
+        self.status_var = None
+        self.status_label = None
+        self.progress_bar = None
+        self.exit_button = None
+        self.setup_complete = False
+
+    def create_window(self):
+        """Create and configure the initialization window"""
+        self.root = tk.Tk()
+        self.root.title("MTech WinTool Setup")
+        self.root.geometry("400x200")
+        self.root.resizable(False, False)
+        
+        # Center window
+        window_width = 400
+        window_height = 200
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Configure theme
+        sv_ttk.set_theme("dark")
+        
+        # Create and pack widgets
+        main_frame = ttk.Frame(self.root, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.status_var = tk.StringVar(value="Initializing...")
+        self.status_label = ttk.Label(main_frame, textvariable=self.status_var)
+        self.status_label.pack(pady=(0, 10))
+
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(
+            main_frame, 
+            variable=self.progress_var,
+            mode='determinate',
+            length=300
+        )
+        self.progress_bar.pack(pady=(0, 20))
+
+        self.exit_button = ttk.Button(
+            main_frame,
+            text="Exit",
+            command=self.on_exit,
+            state=tk.DISABLED
+        )
+        self.exit_button.pack()
+
+    def update_status(self, message, progress=None):
+        """Update status message and progress bar"""
+        if self.root and self.status_var:
+            self.status_var.set(message)
+            if progress is not None and self.progress_var:
+                self.progress_var.set(progress)
+            self.root.update()
+
+    def on_exit(self):
+        """Handle exit button click"""
+        if self.root:
+            self.root.quit()
+
+    def check_winget(self):
+        """Check if winget is installed and accessible"""
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.run(['winget', '--version'], 
+                                 capture_output=True, 
+                                 text=True, 
+                                 startupinfo=startupinfo,
+                                 timeout=10)
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+            return False
+
+    def run(self):
+        """Run the initialization process"""
+        try:
+            self.create_window()
+            
+            # Check winget
+            self.update_status("Checking winget installation...", 10)
+            if not self.check_winget():
+                self.update_status("Winget is not installed. \nPlease install Windows Package Manager.", 100)
+                self.exit_button.configure(state=tk.NORMAL)
+                self.root.mainloop()
+                if self.root:  # Check if window still exists
+                    self.root.destroy()
+                    self.root = None
+                return False
+            
+            self.update_status("Setup completed successfully!", 100)
+            self.setup_complete = True
+            self.exit_button.configure(state=tk.NORMAL)
+            self.root.mainloop()
+            
+            # Clean up window if it still exists
+            if self.root:
+                self.root.destroy()
+                self.root = None
+                
+            return True
+            
+        except Exception as e:
+            if self.root:
+                self.update_status(f"An unexpected error occurred: {str(e)}", 100)
+                self.exit_button.configure(state=tk.NORMAL)
+                self.root.mainloop()
+                if self.root:  # Check if window still exists
+                    self.root.destroy()
+                    self.root = None
+            return False
+        finally:
+            if self.root:
+                self.root.destroy()
+                self.root = None
 
 class MTechWinTool:
     
-    # Software categories and packages
+    # Software categories and packages with descriptions
     SOFTWARE_CATEGORIES = {
         "Browsers": {
-            "Google Chrome": "Google.Chrome",
-            "Mozilla Firefox": "Mozilla.Firefox",
-            "Opera GX": "Opera.OperaGX",
-            "Opera": "Opera.Opera",
-            "Brave": "BraveSoftware.BraveBrowser",
-            "Microsoft Edge": "Microsoft.Edge",
-            "Vivaldi": "VivaldiTechnologies.Vivaldi"
+            "Google Chrome": {
+                "id": "Google.Chrome",
+                "description": "Fast, secure, and user-friendly web browser from Google"
+            },
+            "Mozilla Firefox": {
+                "id": "Mozilla.Firefox",
+                "description": "Privacy-focused web browser with extensive customization options"
+            },
+            "Opera GX": {
+                "id": "Opera.OperaGX",
+                "description": "Gaming browser with CPU, RAM & network limiters"
+            },
+            "Opera": {
+                "id": "Opera.Opera",
+                "description": "Feature-rich browser with built-in VPN and ad-blocking"
+            },
+            "Brave": {
+                "id": "BraveSoftware.BraveBrowser",
+                "description": "Privacy-first browser with built-in ad blocking and crypto wallet"
+            },
+            "Microsoft Edge": {
+                "id": "Microsoft.Edge",
+                "description": "Modern Chromium-based browser from Microsoft"
+            },
+            "Vivaldi": {
+                "id": "VivaldiTechnologies.Vivaldi",
+                "description": "Highly customizable browser with powerful features"
+            }
         },
         "Development": {
-            "Visual Studio Code": "Microsoft.VisualStudioCode",
-            "Git": "Git.Git",
-            "Python": "Python.Python.3.12",
-            "Node.js": "OpenJS.NodeJS.LTS",
-            "JDK": "Oracle.JDK.21",
-            "Docker Desktop": "Docker.DockerDesktop",
-            "Postman": "Postman.Postman",
-            "MongoDB Compass": "MongoDB.Compass.Full",
-            "MySQL Workbench": "Oracle.MySQL.WorkBench",
-            "Android Studio": "Google.AndroidStudio",
-            "Visual Studio Community": "Microsoft.VisualStudio.2022.Community",
-            "GitHub Desktop": "GitHub.GitHubDesktop",
-            "HeidiSQL": "HeidiSQL.HeidiSQL",
-            "DBeaver": "dbeaver.dbeaver"
+            "Visual Studio Code": {
+                "id": "Microsoft.VisualStudioCode",
+                "description": "Lightweight but powerful source code editor"
+            },
+            "Git": {
+                "id": "Git.Git",
+                "description": "Distributed version control system"
+            },
+            "Python": {
+                "id": "Python.Python.3.12",
+                "description": "Popular programming language for general-purpose development"
+            },
+            "Node.js": {
+                "id": "OpenJS.NodeJS.LTS",
+                "description": "JavaScript runtime built on Chrome's V8 engine"
+            },
+            "JDK": {
+                "id": "Oracle.JDK.21",
+                "description": "Java Development Kit for building Java applications"
+            },
+            "Docker Desktop": {
+                "id": "Docker.DockerDesktop",
+                "description": "Platform for building and sharing containerized applications"
+            },
+            "Postman": {
+                "id": "Postman.Postman",
+                "description": "API platform for building and testing API requests"
+            },
+            "MongoDB Compass": {
+                "id": "MongoDB.Compass.Full",
+                "description": "GUI for MongoDB database management"
+            },
+            "MySQL Workbench": {
+                "id": "Oracle.MySQL.WorkBench",
+                "description": "Visual database design and administration tool for MySQL"
+            },
+            "Android Studio": {
+                "id": "Google.AndroidStudio",
+                "description": "Official IDE for Android app development"
+            },
+            "Visual Studio Community": {
+                "id": "Microsoft.VisualStudio.2022.Community",
+                "description": "Full-featured IDE for .NET development"
+            },
+            "GitHub Desktop": {
+                "id": "GitHub.GitHubDesktop",
+                "description": "GUI for managing Git repositories"
+            },
+            "HeidiSQL": {
+                "id": "HeidiSQL.HeidiSQL",
+                "description": "Lightweight SQL client and admin tool"
+            },
+            "DBeaver": {
+                "id": "dbeaver.dbeaver",
+                "description": "Universal database management tool"
+            }
         },
         "Code Editors": {
-            "IntelliJ IDEA Community": "JetBrains.IntelliJIDEA.Community",
-            "PyCharm Community": "JetBrains.PyCharm.Community",
-            "Sublime Text": "SublimeHQ.SublimeText.4",
-            "Atom": "GitHub.Atom",
-            "Notepad++": "Notepad++.Notepad++",
-            "WebStorm": "JetBrains.WebStorm",
-            "Eclipse": "EclipseAdoptium.Temurin.21.JDK"
+            "IntelliJ IDEA Community": {
+                "id": "JetBrains.IntelliJIDEA.Community",
+                "description": "Capable and ergonomic Java IDE"
+            },
+            "PyCharm Community": {
+                "id": "JetBrains.PyCharm.Community",
+                "description": "Python IDE with intelligent code assistance"
+            },
+            "Sublime Text": {
+                "id": "SublimeHQ.SublimeText.4",
+                "description": "Sophisticated text editor for code and markup"
+            },
+            "Atom": {
+                "id": "GitHub.Atom",
+                "description": "Hackable text editor for the 21st Century"
+            },
+            "Notepad++": {
+                "id": "Notepad++.Notepad++",
+                "description": "Feature-rich text and source code editor"
+            },
+            "WebStorm": {
+                "id": "JetBrains.WebStorm",
+                "description": "Professional IDE for JavaScript development"
+            },
+            "Eclipse": {
+                "id": "EclipseAdoptium.Temurin.21.JDK",
+                "description": "Popular IDE supporting multiple programming languages"
+            }
         },
         "Utilities": {
-            "7-Zip": "7zip.7zip",
-            "VLC Media Player": "VideoLAN.VLC",
-            "CPU-Z": "CPUID.CPU-Z",
-            "GPU-Z": "TechPowerUp.GPU-Z",
-            "MSI Afterburner": "MSI.Afterburner",
-            "HWiNFO": "REALiX.HWiNFO",
-            "PowerToys": "Microsoft.PowerToys",
-            "Everything": "voidtools.Everything",
-            "TreeSize Free": "JAMSoftware.TreeSize.Free",
-            "WinDirStat": "WinDirStat.WinDirStat",
-            "Process Explorer": "Microsoft.Sysinternals.ProcessExplorer",
-            "Autoruns": "Microsoft.Sysinternals.Autoruns"
+            "7-Zip": {
+                "id": "7zip.7zip",
+                "description": "File archiver with high compression ratio"
+            },
+            "VLC Media Player": {
+                "id": "VideoLAN.VLC",
+                "description": "Versatile media player supporting various formats"
+            },
+            "CPU-Z": {
+                "id": "CPUID.CPU-Z",
+                "description": "System information and CPU monitoring tool"
+            },
+            "GPU-Z": {
+                "id": "TechPowerUp.GPU-Z",
+                "description": "Graphics card information and monitoring utility"
+            },
+            "MSI Afterburner": {
+                "id": "MSI.Afterburner",
+                "description": "Graphics card overclocking and monitoring tool"
+            },
+            "HWiNFO": {
+                "id": "REALiX.HWiNFO",
+                "description": "Comprehensive hardware analysis and monitoring tool"
+            },
+            "PowerToys": {
+                "id": "Microsoft.PowerToys",
+                "description": "Windows power user productivity tools"
+            },
+            "Everything": {
+                "id": "voidtools.Everything",
+                "description": "Ultra-fast file search utility"
+            },
+            "TreeSize Free": {
+                "id": "JAMSoftware.TreeSize.Free",
+                "description": "Disk space management and visualization"
+            },
+            "WinDirStat": {
+                "id": "WinDirStat.WinDirStat",
+                "description": "Disk usage statistics viewer and cleanup tool"
+            },
+            "Process Explorer": {
+                "id": "Microsoft.Sysinternals.ProcessExplorer",
+                "description": "Advanced task manager and system monitor"
+            },
+            "Autoruns": {
+                "id": "Microsoft.Sysinternals.Autoruns",
+                "description": "Windows startup program manager"
+            }
         },
         "Media & Design": {
-            "Adobe Reader DC": "Adobe.Acrobat.Reader.64-bit",
-            "GIMP": "GIMP.GIMP",
-            "Blender": "BlenderFoundation.Blender",
-            "Audacity": "Audacity.Audacity",
-            "OBS Studio": "OBSProject.OBSStudio",
-            "Paint.NET": "dotPDN.PaintDotNet",
-            "Inkscape": "Inkscape.Inkscape",
-            "Kdenlive": "KDE.Kdenlive",
-            "HandBrake": "HandBrake.HandBrake",
-            "ShareX": "ShareX.ShareX"
+            "Adobe Reader DC": {
+                "id": "Adobe.Acrobat.Reader.64-bit",
+                "description": "Popular PDF viewer and editor"
+            },
+            "GIMP": {
+                "id": "GIMP.GIMP",
+                "description": "Free and open-source raster graphics editor"
+            },
+            "Blender": {
+                "id": "BlenderFoundation.Blender",
+                "description": "Free and open-source 3D creation software"
+            },
+            "Audacity": {
+                "id": "Audacity.Audacity",
+                "description": "Free and open-source audio editing software"
+            },
+            "OBS Studio": {
+                "id": "OBSProject.OBSStudio",
+                "description": "Free and open-source screen recording and streaming software"
+            },
+            "Paint.NET": {
+                "id": "dotPDN.PaintDotNet",
+                "description": "Free image and photo editing software"
+            },
+            "Inkscape": {
+                "id": "Inkscape.Inkscape",
+                "description": "Free and open-source vector graphics editor"
+            },
+            "Kdenlive": {
+                "id": "KDE.Kdenlive",
+                "description": "Free and open-source video editing software"
+            },
+            "HandBrake": {
+                "id": "HandBrake.HandBrake",
+                "description": "Free and open-source video transcoder"
+            },
+            "ShareX": {
+                "id": "ShareX.ShareX",
+                "description": "Free and open-source screenshot and screen recording software"
+            }
         },
         "Communication": {
-            "Microsoft Teams": "Microsoft.Teams",
-            "Zoom": "Zoom.Zoom",
-            "Slack": "SlackTechnologies.Slack",
-            "Discord": "Discord.Discord",
-            "Skype": "Microsoft.Skype",
-            "Telegram": "Telegram.TelegramDesktop",
-            "WhatsApp": "WhatsApp.WhatsApp",
-            "Signal": "OpenWhisperSystems.Signal"
+            "Microsoft Teams": {
+                "id": "Microsoft.Teams",
+                "description": "Communication and collaboration platform"
+            },
+            "Zoom": {
+                "id": "Zoom.Zoom",
+                "description": "Video conferencing and online meeting platform"
+            },
+            "Slack": {
+                "id": "SlackTechnologies.Slack",
+                "description": "Communication platform for teams"
+            },
+            "Discord": {
+                "id": "Discord.Discord",
+                "description": "Communication platform for communities"
+            },
+            "Skype": {
+                "id": "Microsoft.Skype",
+                "description": "Video conferencing and online meeting platform"
+            },
+            "Telegram": {
+                "id": "Telegram.TelegramDesktop",
+                "description": "Cloud-based messaging platform"
+            },
+            "WhatsApp": {
+                "id": "WhatsApp.WhatsApp",
+                "description": "Cross-platform messaging app"
+            },
+            "Signal": {
+                "id": "OpenWhisperSystems.Signal",
+                "description": "Private messaging app"
+            }
         },
         "Security": {
-            "Malwarebytes": "Malwarebytes.Malwarebytes",
-            "Wireshark": "WiresharkFoundation.Wireshark",
-            "Advanced IP Scanner": "Famatech.AdvancedIPScanner",
-            "Bitwarden": "Bitwarden.Bitwarden",
-            "CCleaner": "Piriform.CCleaner",
-            "Windows Terminal": "Microsoft.WindowsTerminal",
-            "OpenVPN": "OpenVPNTechnologies.OpenVPN",
-            "KeePass": "DominikReichl.KeePass",
-            "Glasswire": "GlassWire.GlassWire",
-            "Cryptomator": "Cryptomator.Cryptomator"
+            "Malwarebytes": {
+                "id": "Malwarebytes.Malwarebytes",
+                "description": "Anti-malware software"
+            },
+            "Wireshark": {
+                "id": "WiresharkFoundation.Wireshark",
+                "description": "Network protocol analyzer"
+            },
+            "Advanced IP Scanner": {
+                "id": "Famatech.AdvancedIPScanner",
+                "description": "Network scanner and manager"
+            },
+            "Bitwarden": {
+                "id": "Bitwarden.Bitwarden",
+                "description": "Password manager"
+            },
+            "CCleaner": {
+                "id": "Piriform.CCleaner",
+                "description": "System cleaning and optimization tool"
+            },
+            "Windows Terminal": {
+                "id": "Microsoft.WindowsTerminal",
+                "description": "Terminal emulator for Windows"
+            },
+            "OpenVPN": {
+                "id": "OpenVPNTechnologies.OpenVPN",
+                "description": "Virtual private network software"
+            },
+            "KeePass": {
+                "id": "DominikReichl.KeePass",
+                "description": "Password manager"
+            },
+            "Glasswire": {
+                "id": "GlassWire.GlassWire",
+                "description": "Network security and monitoring software"
+            },
+            "Cryptomator": {
+                "id": "Cryptomator.Cryptomator",
+                "description": "Cloud storage encryption software"
+            }
         },
         "Gaming": {
-            "Steam": "Valve.Steam",
-            "Epic Games Launcher": "EpicGames.EpicGamesLauncher",
-            "GOG Galaxy": "GOG.Galaxy",
-            "Xbox": "Microsoft.Xbox",
-            "Ubisoft Connect": "Ubisoft.Connect",
-            "EA App": "ElectronicArts.EADesktop",
-            "Battle.net": "Blizzard.BattleNet",
-            "PlayStation": "PlayStation.PSRemotePlay"
+            "Steam": {
+                "id": "Valve.Steam",
+                "description": "Digital distribution platform for PC games"
+            },
+            "Epic Games Launcher": {
+                "id": "EpicGames.EpicGamesLauncher",
+                "description": "Digital distribution platform for PC games"
+            },
+            "GOG Galaxy": {
+                "id": "GOG.Galaxy",
+                "description": "Digital distribution platform for PC games"
+            },
+            "Xbox": {
+                "id": "Microsoft.Xbox",
+                "description": "Digital distribution platform for PC games"
+            },
+            "Ubisoft Connect": {
+                "id": "Ubisoft.Connect",
+                "description": "Digital distribution platform for PC games"
+            },
+            "EA App": {
+                "id": "ElectronicArts.EADesktop",
+                "description": "Digital distribution platform for PC games"
+            },
+            "Battle.net": {
+                "id": "Blizzard.BattleNet",
+                "description": "Digital distribution platform for PC games"
+            },
+            "PlayStation": {
+                "id": "PlayStation.PSRemotePlay",
+                "description": "Remote play software for PlayStation consoles"
+            }
         }
     }
 
     def __init__(self):
-        # Initialize automated setup
-        self._setup_environment()
+        # Initialize software descriptions first
+        self.software_descriptions = {}
+        self.software_status = {}
+        self.status_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "software_status.json")
         
-        # Initialize main window
+        # Load software descriptions
+        for category, software_dict in self.SOFTWARE_CATEGORIES.items():
+            for software_name, software_info in software_dict.items():
+                self.software_descriptions[software_name] = software_info['description']
+        
+        # Load saved software status
+        self.load_software_status()
+        
+        # Initialize main window and other variables
         self.root = tk.Tk()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self._setup_window()
+        
+        # Set window close protocol
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close_button)
+        
+        # Check if we need to refresh software status
+        if not os.path.exists(self.status_file):
+            self.root.after(500, self.refresh_software_status)
         
         # Initialize monitoring variables
         self.monitoring = True
-        self.is_maximized = False
         
         # Initialize WMI
         self._init_wmi()
@@ -163,10 +567,63 @@ class MTechWinTool:
         
         # Start monitoring thread
         self._start_monitoring()
+        
+        # Setup tray icon
+        self._setup_tray()
+        
+        # Load settings
+        self._load_settings()
+        
+    def load_software_status(self):
+        self.software_status = {}
+        if os.path.exists('software_status.json'):
+            try:
+                with open('software_status.json', 'r') as f:
+                    self.software_status = json.load(f)
+            except Exception as e:
+                print(f"Error loading software status: {e}")
+
+    def save_software_status(self):
+        """Save software status to file"""
+        # Don't save if skip flag is set
+        if hasattr(self, 'skip_status_save') and self.skip_status_save:
+            return
+            
+        try:
+            with open('software_status.json', 'w') as f:
+                json.dump(self.software_status, f, indent=4)
+        except Exception as e:
+            print(f"Error saving software status: {str(e)}")
+
+    def update_software_status(self, software_name, is_installed):
+        """Update status for a specific software"""
+        # Update in-memory status
+        self.software_status[software_name] = is_installed
+        
+        # Update UI if the software is in the tree
+        def update_ui():
+            if software_name in self.software_items:
+                item = self.software_items[software_name]
+                if is_installed:
+                    self.software_tree.item(item, tags=('installed',))
+                else:
+                    self.software_tree.item(item, tags=())
+        
+            # Save to file
+            try:
+                with open('software_status.json', 'w') as f:
+                    json.dump(self.software_status, f, indent=4)
+            except Exception as e:
+                print(f"Error saving software status: {str(e)}")
+    
+        # Schedule UI update in main thread if not already in it
+        if threading.current_thread() is threading.main_thread():
+            update_ui()
+        else:
+            self.root.after(0, update_ui)
 
     def _setup_window(self):
-        self.root.title("MTech Applcation")
-        
+        """Set up the main window"""        
         # Set window size and center it
         window_width = 1024
         window_height = 768
@@ -177,11 +634,23 @@ class MTechWinTool:
         
         self.root.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
         self.root.minsize(800, 600)
-        self.root.overrideredirect(True)  # Remove window decorations
+        
+        # Remove window decorations
+        self.root.overrideredirect(True)
+        
+        # Set window position
+        self.first_map = True
         
         # Apply theme
         sv_ttk.set_theme("dark")
         self._configure_styles()
+        
+        # Set up window after a short delay to prevent initial minimize
+        self.root.after(100, self._finish_window_setup)
+        
+        # Bind window events
+        self.root.bind("<Map>", self._on_map)
+        self.root.bind("<Unmap>", self._on_unmap)
 
     def _configure_styles(self):
         style = ttk.Style()
@@ -214,121 +683,24 @@ class MTechWinTool:
                        background='#2b2b2b',
                        thickness=15)
 
-    def _setup_environment(self):
-        try:
-            self._setup_openhardwaremonitor()
-            self._check_winget()
-            self._install_required_packages()
-        except Exception as e:
-            messagebox.showwarning(
-                "Setup Error",
-                f"Error during automatic setup:\n{str(e)}\n" +
-                "Some features may not work properly."
-            )
-
-    def _setup_openhardwaremonitor(self):
-        ohm_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "OpenHardwareMonitor")
-        ohm_zip = os.path.join(ohm_dir, "OpenHardwareMonitor.zip")
-        ohm_exe = os.path.join(ohm_dir, "OpenHardwareMonitor.exe")
+    def toggle_theme(self):
+        if self.theme_var.get():
+            sv_ttk.set_theme("dark")
+        else:
+            sv_ttk.set_theme("light")
+    
+    def toggle_network_fields(self):
+        state = "disabled" if self.network_type_var.get() == "dhcp" else "normal"
+        for entry in [self.ip_entry, self.subnet_entry, self.gateway_entry, self.dns_entry]:
+            entry.configure(state=state)
+    
+    def _finish_window_setup(self):
+        # Overrideredirect to keep custom window style
+        self.root.overrideredirect(True)
         
-        # Extract if needed
-        if not os.path.exists(ohm_exe) and os.path.exists(ohm_zip):
-            with zipfile.ZipFile(ohm_zip, 'r') as zip_ref:
-                zip_ref.extractall(ohm_dir)
-        
-        # Start if not running
-        ohm_running = any(proc.info['name'].lower() == 'openhardwaremonitor.exe' 
-                         for proc in psutil.process_iter(['name']))
-        
-        if not ohm_running and os.path.exists(ohm_exe):
-            try:
-                # Try to run with admin privileges
-                subprocess.run(["powershell", "Start-Process", ohm_exe, "-Verb", "RunAs"],
-                             creationflags=subprocess.CREATE_NO_WINDOW)
-                time.sleep(3)  # Give OHM more time to start and initialize
-            except Exception as e:
-                messagebox.showwarning(
-                    "Hardware Monitoring",
-                    "Failed to start OpenHardwareMonitor with admin rights.\n" +
-                    "CPU temperatures will not be available.\n" +
-                    f"Error: {str(e)}"
-                )
-
-    def _check_winget(self):
-        try:
-            subprocess.run(['winget', '--version'], 
-                         capture_output=True, 
-                         text=True, 
-                         creationflags=subprocess.CREATE_NO_WINDOW)
-        except FileNotFoundError:
-            messagebox.showwarning(
-                "Winget Not Found",
-                "The Windows Package Manager (winget) is not installed.\n" +
-                "Some features may not work properly.\n" +
-                "Please install the latest version of App Installer from the Microsoft Store."
-            )
-
-    def _install_required_packages(self):
-        requirements_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "requirements.txt")
-        if not os.path.exists(requirements_path):
-            return
-            
-        try:
-            required = {}
-            with open(requirements_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        if '==' in line:
-                            pkg, ver = line.split('==')
-                            required[pkg] = ver
-                        else:
-                            required[line] = None
-            
-            installed = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
-            missing = []
-            
-            for pkg, ver in required.items():
-                if pkg not in installed or (ver and installed[pkg] != ver):
-                    missing.append(line)
-            
-            if missing:
-                subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-r', requirements_path],
-                                   creationflags=subprocess.CREATE_NO_WINDOW)
-        except Exception as e:
-            messagebox.showwarning(
-                "Package Installation Error",
-                f"Error installing required packages:\n{str(e)}\n" +
-                "Some features may not work properly."
-            )
-
-    def _init_wmi(self):
-        try:
-            self.wmi = wmi.WMI()
-            # Try multiple times to connect to OpenHardwareMonitor
-            max_attempts = 3
-            for attempt in range(max_attempts):
-                try:
-                    self.wmi_hardware = wmi.WMI(namespace="root\\OpenHardwareMonitor")
-                    # Test the connection by trying to get sensors
-                    self.wmi_hardware.Sensor()
-                    return  # Success, exit the function
-                except Exception:
-                    if attempt < max_attempts - 1:
-                        time.sleep(2)  # Wait before retrying
-                    continue
-            
-            # If we get here, all attempts failed
-            raise Exception("Failed to connect to OpenHardwareMonitor after multiple attempts")
-            
-        except Exception as e:
-            messagebox.showwarning(
-                "Hardware Monitoring",
-                "OpenHardwareMonitor is not running or accessible.\n" +
-                "CPU temperatures will not be available.\n" +
-                "Please run the application as administrator for full hardware monitoring."
-            )
-            self.wmi_hardware = None
+        # Bind minimize event to handle it properly
+        self.root.bind("<Map>", self._on_map)
+        self.root.bind("<Unmap>", self._on_unmap)
 
     def _create_title_bar(self):
         title_bar = ttk.Frame(self.root)
@@ -340,7 +712,7 @@ class MTechWinTool:
         
         # Title text
         title_text = ttk.Label(title_frame, 
-                             text="MTech Applcation", 
+                             text="MTech Application", 
                              font=("Segoe UI", 10))
         title_text.pack(side="left", padx=(5, 10), pady=3)
         
@@ -352,7 +724,7 @@ class MTechWinTool:
                   text="─", 
                   width=2,
                   style="MinMax.TButton",
-                  command=self.root.iconify).pack(side="left", padx=1, pady=1)
+                  command=self.minimize_window).pack(side="left", padx=1, pady=1)
         
         ttk.Button(controls_frame, 
                   text="□", 
@@ -364,7 +736,7 @@ class MTechWinTool:
                   text="×", 
                   width=2,
                   style="MinMax.TButton",
-                  command=self.root.quit).pack(side="left", padx=1, pady=1)
+                  command=self._on_close_button).pack(side="left", padx=1, pady=1)
         
         # Make window draggable
         for widget in [title_bar, title_frame, title_text]:
@@ -379,9 +751,6 @@ class MTechWinTool:
         header_frame = ttk.Frame(self.container)
         header_frame.pack(fill="x", pady=(0, 20))
         
-        ttk.Label(header_frame, 
-                 text="MTech WinTool", 
-                 font=("Segoe UI", 24, "bold")).pack(side="left")
 
     def _create_tabs(self):
         self.notebook = ttk.Notebook(self.container)
@@ -705,11 +1074,11 @@ class MTechWinTool:
             ttk.Label(tool_frame, text=description, wraplength=250).pack(pady=(0, 10))
             
             if callable(command):
-                btn = ttk.Button(tool_frame, text="Launch", command=command, style="Accent.TButton")
+                btn = ttk.Button(tool_frame, text="Launch", command=command, style="TButton")
             else:
                 btn = ttk.Button(tool_frame, text="Launch", 
                                command=lambda cmd=command: os.system(cmd), 
-                               style="Accent.TButton")
+                               style="TButton")
             btn.pack()
         
         # Configure grid weights
@@ -755,32 +1124,48 @@ class MTechWinTool:
         ttk.Label(header_frame, text=" 📦 Software Installation ", 
                  font=("Segoe UI", 12, "bold")).pack(side="left")
         
-        # Refresh status button
-        refresh_btn = ttk.Button(header_frame, text="Refresh Status", 
-                               command=self.refresh_software_status)
-        refresh_btn.pack(side="right", padx=(0, 10))
+        # Status frame with progress bar
+        status_frame = ttk.Frame(right_frame)
+        status_frame.pack(fill="x", pady=(0, 10))
         
-        install_btn = ttk.Button(header_frame, text="Install Selected", 
+        self.status_label = ttk.Label(status_frame, text="")
+        self.status_label.pack(fill='x', pady=(0, 5))
+        
+        self.progress_bar = ttk.Progressbar(status_frame, mode='indeterminate', length=350)
+        self.progress_bar.pack(fill='x', pady=(0, 10))
+        
+        # Buttons frame
+        buttons_frame = ttk.Frame(header_frame)
+        buttons_frame.pack(side="right")
+        
+        # Install button
+        install_btn = ttk.Button(buttons_frame, text="Install Selected", 
                                command=self.install_selected_software,
-                               style="Accent.TButton")
-        install_btn.pack(side="right")
+                               style="TButton")
+        install_btn.pack(side="right", padx=5)
+        
+        # Refresh button
+        refresh_btn = ttk.Button(buttons_frame, text="Check Status", 
+                               command=self.refresh_software_status)
+        refresh_btn.pack(side="right", padx=5)
         
         # Create Treeview with style
         style = ttk.Style()
         style.configure("Treeview", rowheight=25)
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
         
-        columns = ("Software", "Status", "Description")
-        self.software_tree = ttk.Treeview(right_frame, columns=columns, show="tree headings", style="Treeview")
+        # Create the treeview
+        self.software_tree = ttk.Treeview(right_frame, show="tree headings", style="Treeview")
+        self.software_tree["columns"] = ("Software", "Description")
         
-        # Set column headings and widths
+        # Configure columns
+        self.software_tree.column("#0", width=30)  # Tree column (arrow)
+        self.software_tree.column("Software", width=150)
+        self.software_tree.column("Description", width=300)
+        
+        # Configure column headings
         self.software_tree.heading("Software", text="Software")
-        self.software_tree.heading("Status", text="Status")
         self.software_tree.heading("Description", text="Description")
-        self.software_tree.column("#0", width=120, minwidth=120)  # Tree column (arrow)
-        self.software_tree.column("Software", width=150, minwidth=150)
-        self.software_tree.column("Status", width=80, minwidth=80)
-        self.software_tree.column("Description", width=500, minwidth=300)
         
         # Add scrollbar
         scrollbar = ttk.Scrollbar(right_frame, orient="vertical", command=self.software_tree.yview)
@@ -790,121 +1175,50 @@ class MTechWinTool:
         self.software_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
-        # Software descriptions
-        self.software_descriptions = {
-            # Browsers
-            "Google Chrome": "Fast and popular web browser by Google",
-            "Mozilla Firefox": "Privacy-focused web browser with extensive add-ons",
-            "Opera GX": "Gaming-focused browser with system optimization",
-            "Opera": "Feature-rich browser with built-in VPN",
-            "Brave": "Privacy-focused browser with built-in ad blocking",
-            "Microsoft Edge": "Modern browser based on Chromium with Windows integration",
-            "Vivaldi": "Highly customizable browser with power user features",
-
-            # Development
-            "Visual Studio Code": "Lightweight but powerful code editor with extensive extensions",
-            "Git": "Distributed version control system",
-            "Python": "Popular programming language for various applications",
-            "Node.js": "JavaScript runtime for server-side development",
-            "JDK": "Java Development Kit for Java applications",
-            "Docker Desktop": "Container platform for application development",
-            "Postman": "API development and testing platform",
-            "MongoDB Compass": "GUI for MongoDB database management",
-            "MySQL Workbench": "Visual database design and administration tool",
-            "Android Studio": "Official IDE for Android development",
-            "Visual Studio Community": "Full-featured IDE for .NET and C++ development",
-            "GitHub Desktop": "GitHub client for easy repository management",
-            "HeidiSQL": "Lightweight SQL database client",
-            "DBeaver": "Universal database tool and SQL client",
-
-            # Code Editors
-            "IntelliJ IDEA Community": "Powerful Java IDE with advanced features",
-            "PyCharm Community": "Python IDE with intelligent coding assistance",
-            "Sublime Text": "Fast and lightweight text editor",
-            "Atom": "Hackable text editor for the 21st century",
-            "Notepad++": "Enhanced text editor with syntax highlighting",
-            "WebStorm": "JavaScript IDE with modern web development tools",
-            "Eclipse": "Multi-language development environment",
-
-            # Utilities
-            "7-Zip": "File archiver with high compression ratio",
-            "VLC Media Player": "Versatile media player supporting various formats",
-            "CPU-Z": "System information and CPU monitoring tool",
-            "GPU-Z": "Graphics card information and monitoring utility",
-            "MSI Afterburner": "Graphics card overclocking and monitoring tool",
-            "HWiNFO": "Comprehensive hardware analysis and monitoring tool",
-            "PowerToys": "Windows power user productivity tools",
-            "Everything": "Ultra-fast file search utility",
-            "TreeSize Free": "Disk space management and visualization",
-            "WinDirStat": "Disk usage statistics viewer and cleanup tool",
-            "Process Explorer": "Advanced task manager and system monitor",
-            "Autoruns": "Windows startup program manager",
-
-            # Media & Design
-            "Adobe Reader DC": "Industry-standard PDF viewer and tools",
-            "GIMP": "Open-source image editor with professional features",
-            "Blender": "3D creation suite for modeling, animation, and rendering",
-            "Audacity": "Multi-track audio editor and recorder",
-            "OBS Studio": "Professional broadcasting and recording software",
-            "Paint.NET": "Image and photo editing software",
-            "Inkscape": "Professional vector graphics editor",
-            "Kdenlive": "Open-source video editor with professional features",
-            "HandBrake": "Open-source video transcoder",
-            "ShareX": "Screen capture and file sharing tool",
-
-            # Communication
-            "Microsoft Teams": "Business communication and collaboration platform",
-            "Zoom": "Video conferencing and remote meeting platform",
-            "Slack": "Team collaboration and messaging platform",
-            "Discord": "Voice, video, and text chat platform",
-            "Skype": "Video calls and instant messaging service",
-            "Telegram": "Cloud-based messaging app with encryption",
-            "WhatsApp": "Popular messaging app with voice and video calls",
-            "Signal": "Privacy-focused encrypted messaging app",
-
-            # Security
-            "Malwarebytes": "Anti-malware and internet security tool",
-            "Wireshark": "Network protocol analyzer for security analysis",
-            "Advanced IP Scanner": "Network scanner for security and management",
-            "Bitwarden": "Open-source password manager",
-            "CCleaner": "System cleaner and optimization tool",
-            "Windows Terminal": "Modern terminal application for Windows",
-            "OpenVPN": "Secure VPN client for private networking",
-            "KeePass": "Local password manager with strong encryption",
-            "Glasswire": "Network monitor and security tool",
-            "Cryptomator": "Cloud storage encryption tool",
-
-            # Gaming
-            "Steam": "Popular gaming platform and store",
-            "Epic Games Launcher": "Game store with weekly free games",
-            "GOG Galaxy": "DRM-free game platform and launcher",
-            "Xbox": "Microsoft's gaming app for PC and cloud gaming",
-            "Ubisoft Connect": "Ubisoft's game launcher and store",
-            "EA App": "Electronic Arts' game platform",
-            "Battle.net": "Blizzard's game launcher and store",
-            "PlayStation": "Remote play for PlayStation consoles"
-        }
-        
-        # Add software to tree with categories as parents
+        # Store category nodes and software items
         self.category_nodes = {}
-        self.software_items = {}  # Store software items for status updates
+        self.software_items = {}
         
-        for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-            category_node = self.software_tree.insert("", "end", text=category, open=True)
+        # Populate software list
+        for category in self.SOFTWARE_CATEGORIES:
+            category_node = self.software_tree.insert("", "end", text=category)
             self.category_nodes[category] = category_node
             
+            software_dict = self.SOFTWARE_CATEGORIES[category]
             for software_name in software_dict:
-                description = self.software_descriptions.get(software_name, "")
                 item = self.software_tree.insert(category_node, "end", 
-                                              values=(software_name, "Checking...", description))
+                                              values=(software_name, software_dict[software_name]['description']))
                 self.software_items[software_name] = item
+            
+            # Expand the category node
+            self.software_tree.item(category_node, open=True)
+        
+        # Apply saved status
+        if hasattr(self, 'software_status'):
+            for software_name, is_installed in self.software_status.items():
+                if software_name in self.software_items:
+                    item = self.software_items[software_name]
+                    if is_installed:
+                        self.software_tree.item(item, tags=('installed',))
+        
+        # Configure tag for installed items
+        self.software_tree.tag_configure('installed', foreground='green')
         
         # Bind double-click to toggle category expansion
         self.software_tree.bind("<Double-1>", self.toggle_category)
         
-        # Start checking software status in background silently
-        self._status_check_thread = threading.Thread(target=self.refresh_software_status, daemon=True)
-        self._status_check_thread.start()
+        # Add right-click menu
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(label="Uninstall", command=self.uninstall_selected_software)
+        
+        # Bind right-click to show context menu
+        self.software_tree.bind("<Button-3>", self.show_context_menu)
+        
+        # Auto-check status if no status file exists
+        if not os.path.exists('software_status.json'):
+            self.status_label.config(text="Starting software status check...")
+            self.progress_bar.start(10)
+            self.root.after(500, self.refresh_software_status)
     
     def setup_autounattend(self):
         # Create main container frame
@@ -951,13 +1265,13 @@ class MTechWinTool:
         # Generate XML button
         generate_btn = ttk.Button(bottom_frame, text="Generate XML", 
                                 command=self.generate_unattend_xml, 
-                                style="Accent.TButton",
+                                style="TButton",
                                 width=20)
         generate_btn.pack(side="right")
 
         # Configure style for accent button
         style = ttk.Style()
-        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"))
+        style.configure("TButton", font=("Segoe UI", 10, "bold"))
         
         # Windows Settings (Left Column)
         windows_frame = ttk.LabelFrame(left_column, text=" 🖥️ Windows Settings ", padding=10)
@@ -1388,101 +1702,145 @@ class MTechWinTool:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save XML: {str(e)}")
     
-    def check_software_status(self, software_name):
+    def update_software_status(self, software_name, is_installed):
+        """Update status for a specific software"""
+        # Update in-memory status
+        self.software_status[software_name] = is_installed
+        
+        # Update UI if the software is in the tree
+        def update_ui():
+            if software_name in self.software_items:
+                item = self.software_items[software_name]
+                if is_installed:
+                    self.software_tree.item(item, tags=('installed',))
+                else:
+                    self.software_tree.item(item, tags=())
+        
+            # Save to file
+            try:
+                with open('software_status.json', 'w') as f:
+                    json.dump(self.software_status, f, indent=4)
+            except Exception as e:
+                print(f"Error saving software status: {str(e)}")
+    
+        # Schedule UI update in main thread if not already in it
+        if threading.current_thread() is threading.main_thread():
+            update_ui()
+        else:
+            self.root.after(0, update_ui)
+
+    def load_software_status(self):
+        self.software_status = {}
+        if os.path.exists('software_status.json'):
+            try:
+                with open('software_status.json', 'r') as f:
+                    self.software_status = json.load(f)
+            except Exception as e:
+                print(f"Error loading software status: {e}")
+
+    def save_software_status(self):
+        """Save software status to file"""
+        # Don't save if skip flag is set
+        if hasattr(self, 'skip_status_save') and self.skip_status_save:
+            return
+            
         try:
-            # Find the category and ID for the software
-            software_id = None
+            with open('software_status.json', 'w') as f:
+                json.dump(self.software_status, f, indent=4)
+        except Exception as e:
+            print(f"Error saving software status: {str(e)}")
+
+    def install_selected_software(self):
+        """Install selected software using winget"""
+        selected = self.software_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Software", "Please select software to install")
+            return
+
+        # Filter out category nodes and get valid software selections
+        software_to_install = []
+        for item in selected:
+            item_data = self.software_tree.item(item)
+            values = item_data.get("values", [])
+            
+            # Skip if it's a category (no values) or not enough values
+            if not values or len(values) < 2:
+                continue
+                
+            software_name = values[0]
+            # Find the category for this software
             for category, software_dict in self.SOFTWARE_CATEGORIES.items():
                 if software_name in software_dict:
-                    software_id = software_dict[software_name]
+                    software_to_install.append((item, category, software_name))
                     break
-            
-            if not software_id:
-                return "Unknown"
 
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-            
-            process = subprocess.Popen(
-                ["winget", "list", "--id", software_id],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                startupinfo=startupinfo,
-                text=True
-            )
-            output, _ = process.communicate()
-            return "Available" if process.returncode != 0 else "Installed"
-        except Exception as e:
-            print(f"Error checking {software_name}: {str(e)}")
-            return "Unknown"
-    
-    def refresh_software_status(self):
-        """Refresh all software status in parallel"""
-        import queue
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        if not software_to_install:
+            messagebox.showinfo("Select Software", "Please select valid software to install")
+            return
         
-        # Create a queue for UI updates
-        update_queue = queue.Queue()
+        # Create progress window
+        progress_window = Toplevel(self.root)
+        progress_window.title("Installing Software")
+        progress_window.geometry("400x150")
         
-        def update_status(category, software_name):
+        # Center the window
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 150) // 2
+        progress_window.geometry(f"+{x}+{y}")
+        
+        # Add progress elements
+        frame = ttk.Frame(progress_window, padding="20")
+        frame.pack(fill='both', expand=True)
+        
+        status_label = ttk.Label(frame, text="Starting installation...", wraplength=350)
+        status_label.pack(fill='x', pady=(0, 10))
+        
+        progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=350)
+        progress_bar.pack(fill='x', pady=(0, 10))
+        progress_bar.start(10)
+        
+        def install_software():
             try:
-                status = self.check_software_status(software_name)
-                update_queue.put((software_name, status))
-                return software_name, status
-            except Exception as e:
-                print(f"Error checking {software_name}: {str(e)}")
-                update_queue.put((software_name, "Unknown"))
-                return software_name, "Unknown"
-        
-        def process_updates():
-            try:
-                while True:
-                    # Check for updates without blocking
+                for item, category, software_name in software_to_install:
+                    winget_id = self.SOFTWARE_CATEGORIES[category][software_name]['id']
                     try:
-                        software_name, status = update_queue.get_nowait()
-                        if software_name in self.software_items:
-                            item = self.software_items[software_name]
-                            self.software_tree.set(item, "Status", status)
-                        update_queue.task_done()
-                    except queue.Empty:
-                        break
-                    
-                # Schedule next update if executor is still running
-                if not executor._shutdown:
-                    self.root.after(100, process_updates)
-            except Exception as e:
-                print(f"Error in UI update: {str(e)}")
+                        status_label.config(text=f"Installing {software_name}...")
+                        
+                        # Run winget install
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        
+                        result = subprocess.run(
+                            ["winget", "install", "-e", "--id", winget_id, "--accept-source-agreements", "--accept-package-agreements"],
+                            capture_output=True,
+                            text=True,
+                            startupinfo=startupinfo
+                        )
+                        
+                        if result.returncode == 0:
+                            # Update status and UI
+                            self.update_software_status(software_name, True)
+                            status_label.config(text=f"Successfully installed {software_name}")
+                            print(f"Successfully installed {software_name}")
+                        else:
+                            error_msg = f"Failed to install {software_name}. Error: {result.stderr}"
+                            status_label.config(text=error_msg)
+                            print(error_msg)
+                            messagebox.showerror("Installation Error", error_msg)
+                    except Exception as e:
+                        error_msg = f"Error installing {software_name}: {str(e)}"
+                        status_label.config(text=error_msg)
+                        print(error_msg)
+                        messagebox.showerror("Installation Error", error_msg)
+            finally:
+                # Stop progress and close window
+                progress_bar.stop()
+                progress_window.after(1500, progress_window.destroy)
         
-        # Create a list of all software to check
-        tasks = []
-        for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-            for software_name in software_dict:
-                tasks.append((category, software_name))
-        
-        # Clear current status
-        for software_name in self.software_items:
-            item = self.software_items[software_name]
-            self.software_tree.set(item, "Status", "Checking...")
-        
-        # Use ThreadPoolExecutor to run checks in parallel
-        executor = ThreadPoolExecutor(max_workers=10)
-        futures = [executor.submit(update_status, category, software_name) 
-                  for category, software_name in tasks]
-        
-        # Start processing UI updates
-        self.root.after(100, process_updates)
-        
-        # Start a separate thread to handle completion
-        def cleanup():
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"Error in thread: {str(e)}")
-            executor.shutdown()
-        
-        threading.Thread(target=cleanup, daemon=True).start()
+        # Run installation in a separate thread
+        threading.Thread(target=install_software, daemon=True).start()
     
     def toggle_category(self, event):
         item = self.software_tree.identify('item', event.x, event.y)
@@ -1510,7 +1868,7 @@ class MTechWinTool:
             for child in category_children:
                 values = self.software_tree.item(child)['values']
                 software_name = values[0].lower()
-                description = values[2].lower()
+                description = values[1].lower()
                 
                 if search_text in software_name or search_text in description:
                     show_category = True
@@ -1519,23 +1877,86 @@ class MTechWinTool:
             if show_category:
                 self.software_tree.reattach(node, "", "end")
     
-    def install_selected_software(self):
-        selected = self.software_tree.selection()
-        if not selected:
-            messagebox.showwarning("No Selection", "Please select software to install")
-            return
-        
-        for item in selected:
-            category, software_name = self.software_tree.item(item)["values"]
-            winget_id = self.SOFTWARE_CATEGORIES[category][software_name]
+    def refresh_software_status(self, force=False):
+        """Refresh software installation status using batch processing"""
+        def check_status():
+            if not hasattr(self, 'root') or not self.root:
+                return
+
             try:
-                subprocess.run(["winget", "install", "-e", "--id", winget_id])
+                # Prepare command to check all software at once
+                all_ids = []
+                id_to_name = {}
+                
+                for category, software_dict in self.SOFTWARE_CATEGORIES.items():
+                    for software_name, software_info in software_dict.items():
+                        # Use cache if available and not forcing refresh
+                        if not force and software_name in self.software_status:
+                            if hasattr(self, 'root') and self.root:
+                                self.root.after(0, lambda name=software_name, installed=self.software_status[software_name]:
+                                    self.update_software_status(name, installed) if hasattr(self, 'root') else None)
+                            continue
+                            
+                        all_ids.append(software_info['id'])
+                        id_to_name[software_info['id']] = software_name
+
+                if all_ids:  # Only proceed if we have IDs to check
+                    # Update status
+                    if hasattr(self, 'status_label'):
+                        self.root.after(0, lambda: 
+                            self.status_label.config(text="Checking software status...") if hasattr(self, 'status_label') else None)
+
+                    # Run single winget command for all software
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    
+                    result = subprocess.run(
+                        ["winget", "list"],
+                        capture_output=True,
+                        text=True,
+                        startupinfo=startupinfo
+                    )
+
+                    # Process output to determine installed software
+                    output = result.stdout.lower()
+                    for software_id in all_ids:
+                        is_installed = software_id.lower() in output
+                        software_name = id_to_name[software_id]
+                        
+                        # Update UI in main thread
+                        if hasattr(self, 'root') and self.root:
+                            self.root.after(0, lambda name=software_name, installed=is_installed:
+                                self.update_software_status(name, installed) if hasattr(self, 'root') else None)
+
+                # Schedule final status update in main thread
+                if hasattr(self, 'root') and self.root and hasattr(self, 'status_label'):
+                    self.root.after(0, lambda: 
+                        self.status_label.config(text="Status check complete!") if hasattr(self, 'status_label') else None)
+
             except Exception as e:
-                messagebox.showerror("Installation Error", 
-                                   f"Failed to install {software_name}: {str(e)}")
+                if hasattr(self, 'root') and self.root:
+                    print(f"Error in check_status: {str(e)}")
+                    if hasattr(self, 'status_label'):
+                        self.root.after(0, lambda: 
+                            self.status_label.config(text="Error checking software status") if hasattr(self, 'status_label') else None)
+            finally:
+                # Schedule progress bar cleanup in main thread if widgets still exist
+                if hasattr(self, 'root') and self.root:
+                    if hasattr(self, 'progress_bar'):
+                        self.root.after(0, lambda: 
+                            self.progress_bar.stop() if hasattr(self, 'progress_bar') else None)
+                    if hasattr(self, 'status_label'):
+                        self.root.after(1500, lambda: 
+                            self.status_label.config(text="") if hasattr(self, 'status_label') else None)
+
+        # Start progress bar if it exists
+        if hasattr(self, 'progress_bar'):
+            self.progress_bar.start()
+
+        # Run check in background thread
+        threading.Thread(target=check_status, daemon=True).start()
     
     def update_stats(self):
-        temp_update_counter = 0     # Counter for temperature updates
         while self.monitoring:
             try:
                 # Update CPU usage
@@ -1546,24 +1967,6 @@ class MTechWinTool:
                 
                 # Update Disk usage
                 disk = psutil.disk_usage('/')
-                
-                # Update CPU temperature if available (every 10 seconds)
-                temp_update_counter += 1
-                if hasattr(self, 'wmi_hardware') and self.wmi_hardware and temp_update_counter >= 10:
-                    try:
-                        temperature_infos = self.wmi_hardware.Sensor()
-                        for sensor in temperature_infos:
-                            if sensor.SensorType == 'Temperature' and 'CPU' in sensor.Name:
-                                if hasattr(self, 'cpu_temp_label'):
-                                    self.cpu_temp_label.configure(text=f"{sensor.Value:.1f}°C")
-                                    self.cpu_temp_progress['value'] = sensor.Value
-                                break
-                        temp_update_counter = 0
-                    except Exception:
-                        # Silently handle temperature reading errors
-                        if hasattr(self, 'cpu_temp_label'):
-                            self.cpu_temp_label.configure(text="N/A")
-                            self.cpu_temp_progress['value'] = 0
                 
                 # Update System Monitor tab
                 if self.cpu_label:
@@ -1621,11 +2024,6 @@ class MTechWinTool:
         else:
             sv_ttk.set_theme("light")
     
-    def toggle_network_fields(self):
-        state = "disabled" if self.network_type_var.get() == "dhcp" else "normal"
-        for entry in [self.ip_entry, self.subnet_entry, self.gateway_entry, self.dns_entry]:
-            entry.configure(state=state)
-    
     def start_move(self, event):
         self.x = event.x
         self.y = event.y
@@ -1663,14 +2061,10 @@ class MTechWinTool:
             icon_label = ttk.Label(left_frame, image=icon)
             icon_label.image = icon
             icon_label.pack(pady=(0, 20))
-        
-        # App name
-        app_name = ttk.Label(left_frame, text="MTech WinTool", 
-                           font=("Segoe UI", 24, "bold"))
-        app_name.pack(pady=(0, 10))
+    
         
         # Version
-        version = ttk.Label(left_frame, text="Beta Version 0.0.1a", 
+        version = ttk.Label(left_frame, text="Beta Version 0.0.2a", 
                           font=("Segoe UI", 12))
         version.pack(pady=(0, 20))
         
@@ -1743,33 +2137,346 @@ class MTechWinTool:
             feature_desc.pack(side="left", padx=(5, 0))
     
     def run(self):
-        self.root.mainloop()
-
-    def on_closing(self):
+        """Start the application"""
         try:
-            # Stop monitoring thread if running
-            if hasattr(self, '_monitoring_thread') and self._monitoring_thread and self._monitoring_thread.is_alive():
-                self._stop_monitoring = True
-                self._monitoring_thread.join(timeout=1.0)
+            # Initialize monitoring thread
+            self.monitoring = True
+            self.monitoring_thread = threading.Thread(target=self.update_stats, daemon=True)
+            self.monitoring_thread.start()
             
-            # Stop any running processes
+            # Create system tray icon
+            self.icon = None
+            if os.path.exists("assets/icon.ico"):
+                try:
+                    image = Image.open("assets/icon.ico")
+                    menu = pystray.Menu(
+                        pystray.MenuItem("Show", self._show_window),
+                        pystray.MenuItem("Exit", self._quit_app)
+                    )
+                    self.icon = pystray.Icon("MTech WinTool", image, "MTech WinTool", menu)
+                    self.icon_thread = threading.Thread(target=self.icon.run, daemon=True)
+                    self.icon_thread.start()
+                except Exception as e:
+                    print(f"Failed to create system tray icon: {e}")
+                    self.icon = None
+            
+            # Start the main event loop
+            self.root.mainloop()
+            
+        except Exception as e:
+            print(f"Error running application: {e}")
+            self.cleanup()
+            raise
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
+        """Clean up resources before exit"""
+        try:
+            # Set flag to stop background operations
+            self.monitoring = False
+            
+            # Immediately terminate any running processes
             if hasattr(self, 'ohm_process') and self.ohm_process:
                 try:
-                    self.ohm_process.terminate()
-                    self.ohm_process.wait(timeout=1.0)
+                    self.ohm_process.kill()
                 except:
                     pass
-            
-            # Destroy the root window
-            if self.root:
-                self.root.quit()
-                self.root.destroy()
-        except Exception as e:
-            print(f"Error during cleanup: {str(e)}")
-            # Force quit if cleanup fails
-            if self.root:
-                self.root.destroy()
 
+            # Force stop system tray icon
+            if hasattr(self, 'icon') and self.icon:
+                try:
+                    self.icon.stop()
+                except:
+                    pass
+
+            # Quick save of critical data
+            try:
+                self._save_settings()
+                # Only save software status if not skipping
+                if not hasattr(self, 'skip_status_save') or not self.skip_status_save:
+                    self.save_software_status()
+            except:
+                pass
+
+            # Get current process ID
+            current_pid = os.getpid()
+            
+            # Use Windows API to terminate the process
+            import ctypes
+            kernel32 = ctypes.WinDLL('kernel32')
+            handle = kernel32.OpenProcess(1, 0, current_pid)
+            kernel32.TerminateProcess(handle, 0)
+            
+        except:
+            # If anything fails, still force exit
+            os._exit(0)
+
+    def _show_window(self, icon, item):
+        """Show the main window from system tray"""
+        icon.stop()
+        self.root.after(0, self.root.deiconify)
+
+    def _quit_app(self, icon, item):
+        """Quit the application from system tray"""
+        icon.stop()
+        self.root.after(0, self._on_close_button)
+
+    def _on_closing(self, event=None):
+        """Legacy close handler for protocol"""
+        self._on_close_button()
+    
+    def _on_close_button(self):
+        """Handle window close button click"""
+        # Check if status label shows we're checking software or uninstalling
+        if (hasattr(self, 'status_label') and 
+            hasattr(self.status_label, 'cget') and 
+            ('Checking' in self.status_label.cget('text') or 'Uninstalling' in self.status_label.cget('text'))):
+            # Show warning if we're checking software status or uninstalling
+            if messagebox.askokcancel("Quit", "MTech WinTool is still processing.\nClosing now may lead to inconsistent software status.\nDo you still want to quit?"):
+                # Set flag to prevent saving software status
+                self.skip_status_save = True
+                # Delete software_status.json to force a fresh check next time
+                try:
+                    if os.path.exists('software_status.json'):
+                        os.remove('software_status.json')
+                except Exception as e:
+                    print(f"Error deleting software_status.json: {str(e)}")
+                self.cleanup()
+        else:
+            # Just cleanup and exit if we're not checking status
+            self.cleanup()
+
+    def _on_map(self, event):
+        if event.widget is self.root:
+            self.root.deiconify()
+            self.minimized = False
+        
+    def _on_unmap(self, event):
+        if event.widget is self.root and not self.minimized:
+            self.minimized = True
+            self.root.withdraw()
+            
+    def minimize_window(self):
+        """Minimize window to tray with first-time notification"""
+        if not self.minimized:
+            if self.settings.get("show_minimize_message", True):
+                result = messagebox.showinfo(
+                    "Minimized to Tray",
+                    "MTech WinTool will continue running in the system tray.\n" +
+                    "Click the tray icon to restore the window.\n\n" +
+                    "This message won't show again.",
+                    icon="info"
+                )
+                self.settings["show_minimize_message"] = False
+                self._save_settings()
+            
+            self.root.withdraw()
+            self.minimized = True
+
+    def _setup_tray(self):
+        # Create tray icon menu
+        menu = (
+            pystray.MenuItem('Open', self._show_window),
+            pystray.MenuItem('Minimize', self.minimize_window),
+        )
+        
+        try:
+            # Try to load the icon
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+            if os.path.exists(icon_path):
+                icon_image = Image.open(icon_path)
+            else:
+                # Create a default icon (16x16 black square)
+                icon_image = Image.new('RGB', (16, 16), 'black')
+            
+            # Create the icon
+            self.icon = pystray.Icon(
+                "MTechWinTool",
+                icon_image,
+                "MTech WinTool",
+                menu
+            )
+            
+            # Start the icon
+            self.icon.run_detached()
+        except Exception as e:
+            print(f"Failed to create tray icon: {str(e)}")
+            self.icon = None
+    
+    def _load_settings(self):
+        """Load application settings from settings.json"""
+        self.settings_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+        self.settings = {
+            "show_minimize_message": True  # Default to show the message
+        }
+        
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r') as f:
+                    self.settings.update(json.load(f))
+        except Exception as e:
+            print(f"Error loading settings: {str(e)}")
+            
+    def _save_settings(self):
+        """Save application settings to settings.json"""
+        try:
+            with open(self.settings_file, 'w') as f:
+                json.dump(self.settings, f, indent=4)
+        except Exception as e:
+            print(f"Error saving settings: {str(e)}")
+
+    def _setup_environment(self):
+        """Set up the environment for the application"""
+        self._check_winget()
+    
+    def _init_wmi(self):
+        try:
+            # Initialize WMI connections
+            self.wmi = wmi.WMI()
+            
+            # Initialize monitoring variables
+            self.cpu_temps = []
+            self.gpu_temps = []
+            
+        except Exception as e:
+            messagebox.showwarning(
+                "WMI Error",
+                "Failed to initialize WMI monitoring.\n" +
+                "System monitoring features may be limited.\n" +
+                f"Error: {str(e)}"
+            )
+    
+    def show_context_menu(self, event):
+        """Show context menu on right-click"""
+        item = self.software_tree.identify_row(event.y)
+        if item and self.software_tree.parent(item):  # Only show menu for software items, not categories
+            self.software_tree.selection_set(item)
+            self.context_menu.post(event.x_root, event.y_root)
+            
+    def uninstall_selected_software(self):
+        """Uninstall selected software using winget"""
+        selected = self.software_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Software", "Please select software to uninstall")
+            return
+
+        # Get software info
+        item = selected[0]
+        values = self.software_tree.item(item).get("values", [])
+        
+        # Skip if it's a category (no values) or not enough values
+        if not values:
+            return
+            
+        software_name = values[0]
+        
+        # Find software ID
+        software_id = None
+        for category, software_dict in self.SOFTWARE_CATEGORIES.items():
+            if software_name in software_dict:
+                software_id = software_dict[software_name]['id']
+                break
+                
+        if not software_id:
+            return
+            
+        # Confirm uninstallation
+        if not messagebox.askyesno("Confirm Uninstall", 
+                                 f"Are you sure you want to uninstall {software_name}?"):
+            return
+            
+        # Create progress window
+        progress_window = Toplevel(self.root)
+        progress_window.title("Uninstalling Software")
+        progress_window.geometry("400x150")
+        
+        # Center the window
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 150) // 2
+        progress_window.geometry(f"+{x}+{y}")
+        
+        # Add progress elements
+        frame = ttk.Frame(progress_window, padding="20")
+        frame.pack(fill='both', expand=True)
+        
+        status_label = ttk.Label(frame, text=f"Uninstalling {software_name}...", wraplength=350)
+        status_label.pack(fill='x', pady=(0, 10))
+        
+        progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=350)
+        progress_bar.pack(fill='x', pady=(0, 10))
+        progress_bar.start(10)
+        
+        def uninstall_software():
+            try:
+                # Run winget uninstall with silent mode
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                
+                result = subprocess.run(
+                    ["winget", "uninstall", "--silent", "--id", software_id, "--accept-source-agreements"],
+                    capture_output=True,
+                    text=True,
+                    startupinfo=startupinfo,
+                    timeout=180  # 3 minute timeout
+                )
+                
+                if result.returncode == 0:
+                    # Update status and UI
+                    self.update_software_status(software_name, False)
+                    status_label.config(text=f"Successfully uninstalled {software_name}")
+                    print(f"Successfully uninstalled {software_name}")
+                else:
+                    error_msg = f"Failed to uninstall {software_name}. Error: {result.stderr}"
+                    status_label.config(text=error_msg)
+                    print(error_msg)
+                    messagebox.showerror("Uninstallation Error", error_msg)
+            except subprocess.TimeoutExpired:
+                error_msg = f"Uninstallation of {software_name} timed out after 3 minutes"
+                status_label.config(text=error_msg)
+                print(error_msg)
+                messagebox.showerror("Uninstallation Error", error_msg)
+            except Exception as e:
+                error_msg = f"Error uninstalling {software_name}: {str(e)}"
+                status_label.config(text=error_msg)
+                print(error_msg)
+                messagebox.showerror("Uninstallation Error", error_msg)
+            finally:
+                # Stop progress and close window
+                progress_bar.stop()
+                progress_window.after(1500, progress_window.destroy)
+        
+        # Run uninstallation in a separate thread
+        threading.Thread(target=uninstall_software, daemon=True).start()
+    
 if __name__ == "__main__":
-    app = MTechWinTool()
-    app.run()
+    # First check if winget is installed
+    try:
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        result = subprocess.run(['winget', '--version'], capture_output=True, text=True, startupinfo=startupinfo)
+        winget_installed = result.returncode == 0
+    except:
+        winget_installed = False
+
+    # Use context manager for single instance check
+    with SingleInstance("MTechWinTool_Instance") as running:
+        if not running:
+            messagebox.showwarning("Already Running", "MTech WinTool is already running!")
+            sys.exit(0)
+        
+        # Only show initialization UI if winget is not installed
+        if not winget_installed:
+            init = InitializationUI()
+            if not init.run():
+                sys.exit(1)  # Exit if initialization failed
+        
+        try:
+            # Start main app
+            app = MTechWinTool()
+            app.run()
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            sys.exit(1)
