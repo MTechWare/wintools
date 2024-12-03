@@ -25,6 +25,24 @@ A modern, automated Windows utility application that simplifies system monitorin
 - Winget package manager
 - Administrator privileges (for some features)
 
+## 🆕 What's New in Beta 0.0.2a
+
+### Performance Improvements
+- Optimized software status checking with batch processing
+- Removed unnecessary dependency installation step
+- Improved overall application responsiveness
+
+### Enhanced Software Management
+- Added silent mode for software uninstallation
+- Added timeout handling for installation/uninstallation
+- Improved software installation reliability
+- Better error messages and status display
+
+### Bug Fixes
+- Fixed software status refresh performance
+- Improved error handling during installation/uninstallation
+- Enhanced thread safety in UI updates
+  
 ## 🌟 Key Features
 
 ### 🔄 Automated Setup
@@ -103,24 +121,6 @@ A modern, automated Windows utility application that simplifies system monitorin
    Build.cmd
    ```
    The executable will be created in the `dist` directory.
-
-## 🆕 What's New in Beta 0.0.2a
-
-### Performance Improvements
-- Optimized software status checking with batch processing
-- Removed unnecessary dependency installation step
-- Improved overall application responsiveness
-
-### Enhanced Software Management
-- Added silent mode for software uninstallation
-- Added timeout handling for installation/uninstallation
-- Improved software installation reliability
-- Better error messages and status display
-
-### Bug Fixes
-- Fixed software status refresh performance
-- Improved error handling during installation/uninstallation
-- Enhanced thread safety in UI updates
 
 ## 🚀 Getting Started
 
