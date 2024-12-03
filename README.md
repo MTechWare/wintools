@@ -6,22 +6,6 @@ A modern, automated Windows utility application that simplifies system monitorin
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/release/MTechWinTool.exe" -OutFile "MTechWinTool.exe"; Start-Process "MTechWinTool.exe
 ```
-   
-## 📸 Screenshots
-
-<div align="center">
-
-| System Monitoring | Software Installation |
-|:---:|:---:|
-| ![System](screenshots/wintool_System.png) | ![Install](screenshots/wintool_Install.png) |
-| *Real-time CPU, Memory, and Disk monitoring* | *Easy software installation with parallel status checking* |
-
-| Hardware Information | Windows Configuration |
-|:---:|:---:|
-| ![Hardware](screenshots/wintool_Hardware.png) | ![Config](screenshots/wintool_Unattend.png) |
-| *Detailed hardware monitoring and system info* | *Windows unattended installation configuration* |
-
-</div>
 
 ## 🔧 Requirements
 
@@ -47,7 +31,23 @@ Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/
 - Fixed software status refresh performance
 - Improved error handling during installation/uninstallation
 - Enhanced thread safety in UI updates
-  
+
+## 📸 Screenshots
+
+<div align="center">
+
+| System Monitoring | Software Installation |
+|:---:|:---:|
+| ![System](screenshots/wintool_System.png) | ![Install](screenshots/wintool_Install.png) |
+| *Real-time CPU, Memory, and Disk monitoring* | *Easy software installation with parallel status checking* |
+
+| Hardware Information | Windows Configuration |
+|:---:|:---:|
+| ![Hardware](screenshots/wintool_Hardware.png) | ![Config](screenshots/wintool_Unattend.png) |
+| *Detailed hardware monitoring and system info* | *Windows unattended installation configuration* |
+
+</div>
+
 ## 🌟 Key Features
 
 ### 🔄 Automated Setup
