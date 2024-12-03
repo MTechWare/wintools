@@ -146,11 +146,6 @@ Feel free to:
 - Suggest features
 - Submit pull requests
 
-## 📫 Contact
-
-- GitHub Issues: [Report a bug](https://github.com/MTechWare/wintools/issues)
-- Email: support@mtechware.com
-
 ---
 
 Made with ❤️ by MTechWare
