@@ -1,9 +1,12 @@
-# MTech WinTool (Beta 0.0.3a)
-
 <div align="center">
 
-A modern, automated Windows utility application that simplifies system monitoring and software management.
-Built with Python and tkinter, featuring an elegant Sun Valley theme.
+# MTech WinTool (Beta 0.0.3a)
+
+⚡ **Supercharge Your Windows Experience!**
+
+A powerful Windows utility that puts you in control. Monitor your system, manage software, and optimize performance - all with a beautiful, modern interface.
+
+*Crafted with Python and Tkinter, featuring the stunning Sun Valley theme for a native Windows 11 look.*
 
 </div>
 
@@ -27,7 +30,7 @@ Download the latest release from [GitHub Releases](https://github.com/MTechWare/
 - Administrator privileges (for some features)
 
 ## 💡 Pro Tips
-- right-click uninstallation of packages
+- right-click uninstallation of a package
 - Use system tray to keep the tool running in background
 - Use category filters to find software quickly
 - Keep the tool updated for best performance
