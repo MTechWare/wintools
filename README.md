@@ -1,11 +1,11 @@
-# MTech WinTool (Beta 0.0.3a)
 
 <div align="center">
+# MTech WinTool (Beta 0.0.3a)
 
 ⚡ **Supercharge Your Windows Experience!**
 
 **A powerful Windows utility that puts you in control. Monitor your system, manage software, and optimize performance - all with a beautiful, modern interface.**
-*Crafted with Python and Tkinter, featuring the stunning Sun Valley theme for a native Windows 11 look.*
+Crafted with Python and Tkinter, featuring the stunning Sun Valley theme for a native Windows 11 look.
 
 </div>
 
