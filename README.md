@@ -24,7 +24,7 @@ Download the latest release from [GitHub Releases](https://github.com/MTechWare/
 
 - Windows 10/11
 - Python 3.11+ (for building from source)
-- Winget package manager
+- Winget package manager (auto-installed if not present)
 - Administrator privileges (for some features)
 
 ## 💡 Pro Tips
