@@ -1,9 +1,6 @@
 <div align="center">
 
-# MTech WinTool
-## Beta 0.0.3a
-
-⚡ **Supercharge Your Windows Experience!**
+# MTech WinTool | Beta 0.0.3a
 
 **A powerful Windows utility that puts you in control. Monitor your system, manage software, and optimize performance - all with a beautiful, modern interface.**
 
