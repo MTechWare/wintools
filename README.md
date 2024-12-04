@@ -38,7 +38,7 @@ Download the latest release from [GitHub Releases](https://github.com/MTechWare/
 ### 🛠️ Winget Feature
 - Automatic winget installation if not present
 - Smart package detection shows already installed software
-- Real-time status tracking of installed packages
+- Real-time status tracking of installed/uninstalled packages
 - Batch processing for faster package checks
 - Silent installation support
 - Seamless integration with Windows Package Manager
