@@ -2,22 +2,6 @@
 
 A modern, automated Windows utility application that simplifies system monitoring and software management. Built with Python and tkinter, featuring an elegant Sun Valley theme and automated setup process.
 
-## 📸 Screenshots
-
-<div align="center">
-
-| System Monitoring | Software Installation |
-|:---:|:---:|
-| ![System](screenshots/wintool_System.png) | ![Install](screenshots/wintool_Install.png) |
-| *Real-time CPU, Memory, and Disk monitoring* | *Easy software installation with parallel status checking* |
-
-| Hardware Information | Windows Configuration |
-|:---:|:---:|
-| ![Hardware](screenshots/wintool_Hardware.png) | ![Config](screenshots/wintool_Unattend.png) |
-| *Detailed hardware monitoring and system info* | *Windows unattended installation configuration* |
-
-</div>
-
 ## 🔧 Requirements
 
 - Windows 10/11
@@ -36,6 +20,22 @@ Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/
 ### Alternative Installation
 
 Download the latest release from [GitHub Releases](https://github.com/MTechWare/wintools/releases) and run the executable.
+
+## 📸 Screenshots
+
+<div align="center">
+
+| System Monitoring | Software Installation |
+|:---:|:---:|
+| ![System](screenshots/wintool_System.png) | ![Install](screenshots/wintool_Install.png) |
+| *Real-time CPU, Memory, and Disk monitoring* | *Easy software installation with parallel status checking* |
+
+| Hardware Information | Windows Configuration |
+|:---:|:---:|
+| ![Hardware](screenshots/wintool_Hardware.png) | ![Config](screenshots/wintool_Unattend.png) |
+| *Detailed hardware monitoring and system info* | *Windows unattended installation configuration* |
+
+</div>
 
 ## 🆕 What's New in Beta 0.0.3a
 
