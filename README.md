@@ -1,36 +1,6 @@
-# MTech WinTool (Beta 0.0.2a)
+# MTech WinTool (Beta 0.0.3a)
 
 A modern, automated Windows utility application that simplifies system monitoring and software management. Built with Python and tkinter, featuring an elegant Sun Valley theme and automated setup process.
-
-### One-Click Download and Run (Powershell) 
-```powershell
-Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/release/MTechWinTool.exe" -OutFile "MTechWinTool.exe"; Start-Process "MTechWinTool.exe"
-```
-
-## 🔧 Requirements
-
-- Windows 10/11
-- Python 3.11 or higher
-- Winget package manager
-- Administrator privileges (for some features)
-
-## 🆕 What's New in Beta 0.0.2a
-
-### Performance Improvements
-- Optimized software status checking with batch processing
-- Removed unnecessary dependency installation step
-- Improved overall application responsiveness
-
-### Enhanced Software Management
-- Added silent mode for software uninstallation
-- Added timeout handling for installation/uninstallation
-- Improved software installation reliability
-- Better error messages and status display
-
-### Bug Fixes
-- Fixed software status refresh performance
-- Improved error handling during installation/uninstallation
-- Enhanced thread safety in UI updates
 
 ## 📸 Screenshots
 
@@ -48,12 +18,62 @@ Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/
 
 </div>
 
+## 🔧 Requirements
+
+- Windows 10/11
+- Python 3.11 or higher
+- Winget package manager
+- Administrator privileges (for some features)
+
+## 📥 Installation
+
+### Quick Install (PowerShell)
+
+```powershell
+Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/release/MTechWinTool.exe" -OutFile "MTechWinTool.exe"; Start-Process "MTechWinTool.exe"
+```
+
+### Alternative Installation
+
+Download the latest release from [GitHub Releases](https://github.com/MTechWare/wintools/releases) and run the executable.
+
+## 🆕 What's New in Beta 0.0.3a
+
+### New Features
+- Added Settings tab
+
+### Performance Improvements
+- Optimized software status checking with batch processing (major improvement)
+
+### Enhanced Software Management
+- Added silent mode for software uninstallation
+- Added timeout handling for installation/uninstallation
+- Improved software installation reliability
+
+### UI Improvements
+- Enhanced minimize to tray behavior with first-time notification
+- Improved settings persistence and management
+
+### Bug Fixes
+- Fixed software status refresh performance
+- Improved error handling during installation/uninstallation
+- Enhanced thread safety in UI updates
+- When building from source, the executable is smaller
+
+## 💡 Tips
+
+- Use the system tray feature to keep the tool running in background
+- Check the detailed error messages if software installation fails
+- Utilize the category filters to find software quickly
+- Keep the tool updated for best performance
+
 ## 🌟 Key Features
 
 ### 🔄 Automated Setup
 - No manual configuration needed
 - Auto-checks for winget availability
 - Streamlined initialization process
+- Fixed Winget auto-installation
 
 ### 🎨 Modern UI
 - Sleek Sun Valley theme with custom title bar
@@ -87,22 +107,10 @@ Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/
 - System optimization tools
 - Hardware monitoring integration
 
-## 📥 Installation
-
-### Easy Install (Recommended)
-
-1. Download the latest release
-2. Run `Install.cmd` as administrator
-3. Wait for the installation to complete
-4. Launch MTech WinTool from the Start Menu
-
-### Manual Installation
+### Manual Installation (From Source)
 
 1. Install Python 3.11 or higher
-2. Install required packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
+2. Install required packages use install.cmd
 3. Run the application:
    ```bash
    python main.py
@@ -118,7 +126,7 @@ Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/
 
 2. **Install Dependencies**
    ```bash
-   pip install -r requirements.txt
+   install.cmd
    ```
 
 3. **Build the Executable**
@@ -126,19 +134,6 @@ Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/
    Build.cmd
    ```
    The executable will be created in the `dist` directory.
-
-## 🚀 Getting Started
-
-1. Download the latest release
-2. Run with administrator privileges
-3. Start managing your Windows system efficiently!
-
-## 💡 Tips
-
-- Use the system tray feature to keep the tool running in background
-- Check the detailed error messages if software installation fails
-- Utilize the category filters to find software quickly
-- Keep the tool updated for best performance
 
 ## 📝 License
 
@@ -150,6 +145,10 @@ Feel free to:
 - Report issues
 - Suggest features
 - Submit pull requests
+
+## 📫 Contact
+
+- GitHub Issues: [Report a bug](https://github.com/MTechWare/wintools/issues)
 
 ---
 

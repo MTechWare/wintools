@@ -1,8 +1,8 @@
 sv-ttk==2.6.0
-psutil
-wmi
-requests
-beautifulsoup4
-tqdm
-Pillow
+psutil==5.9.8
+wmi==1.5.1
+requests==2.31.0
+beautifulsoup4==4.12.3
+tqdm==4.66.1
+Pillow==10.2.0
 pystray>=0.19.5

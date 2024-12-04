@@ -39,11 +39,17 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Added excludes to remove unused modules
+   excludes=['matplotlib', 'numpy', 'pandas', 'scipy', 'tk', 'tcl', 'PyQt5', 'PySide2', 'IPython', 
+         'notebook', 'jupyter', 'qtpy', 'sphinx', 'pytest', 'wx'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
+    # Added collect options to minimize included files
+    collect_submodules=[],
+    collect_data_files=[],
+    collect_binaries=[],
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -58,9 +64,12 @@ exe = EXE(
     name='MTechWinTool',
     debug=False,
     bootloader_ignore_signals=False,
+    # Enable stripping of binary
     strip=False,
+    # Enhanced UPX compression
     upx=True,
     upx_exclude=[],
+    upx_args=['--best'],
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,

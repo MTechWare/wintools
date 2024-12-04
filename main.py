@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MTechWinTool - Windows System Utility
-Version: Beta 0.0.2a
+Version: Beta 0.0.3a
 
 A modern Windows utility for system monitoring and software management.
 This application requires administrative privileges for certain operations:
@@ -80,6 +80,26 @@ class SingleInstance:
             except:
                 pass
 
+class Software:
+    def __init__(self, name, description):
+        self.name = name
+        self.description = description
+        self.installed = False
+        self.version = ""
+        self.last_check = None
+        
+    def update_status(self, installed_software):
+        """Update installation status based on installed software list"""
+        for software in installed_software:
+            if self.name.lower() in software['name'].lower():
+                self.installed = True
+                self.version = software.get('version', '')
+                self.last_check = datetime.now()
+                return
+        self.installed = False
+        self.version = ""
+        self.last_check = datetime.now()
+
 class InitializationUI:
     def __init__(self):
         self.root = None
@@ -89,6 +109,7 @@ class InitializationUI:
         self.progress_bar = None
         self.exit_button = None
         self.setup_complete = False
+        self.download_thread = None
 
     def create_window(self):
         """Create and configure the initialization window"""
@@ -147,19 +168,137 @@ class InitializationUI:
         if self.root:
             self.root.quit()
 
-    def check_winget(self):
-        """Check if winget is installed and accessible"""
+    def download_winget(self):
+        """Download and install winget with progress tracking"""
+        import requests
+        import tempfile
+        import os
+        
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
         try:
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            result = subprocess.run(['winget', '--version'], 
-                                 capture_output=True, 
-                                 text=True, 
-                                 startupinfo=startupinfo,
-                                 timeout=10)
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
-            return False
+            url = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
+            print("Downloading winget from GitHub...")
+            self.update_status("Starting Winget download...", 10)
+            
+            # Download with progress tracking
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': '*/*',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive'
+            }
+            response = requests.get(url, stream=True, headers=headers, verify=True)
+            total_size = int(response.headers.get('content-length', 0))
+            
+            # Create temp file
+            temp_file = os.path.join(tempfile.gettempdir(), "Microsoft.DesktopAppInstaller.msixbundle")
+            
+            block_size = 1024 * 1024  # 1 MB chunks
+            downloaded = 0
+            
+            with open(temp_file, 'wb') as f:
+                for data in response.iter_content(block_size):
+                    if data:
+                        downloaded += len(data)
+                        f.write(data)
+                        # Calculate progress percentage and speed
+                        if total_size > 0:
+                            percent = int((downloaded / total_size) * 100)
+                            progress = int(10 + (percent * 0.2))  # Scale to 10-30% range
+                            speed = downloaded / (1024 * 1024)  # MB downloaded
+                            self.update_status(f"Downloading Winget... {percent}% ({speed:.1f} MB)", progress)
+                            print(f"Download progress: {percent}% ({speed:.1f} MB)")
+            
+            print("Download complete, installing...")
+            self.update_status("Installing package...", 40)
+            
+            # Install the package
+            install_cmd = [
+                'powershell', '-Command',
+                f'Add-AppxPackage -Path "{temp_file}"'
+            ]
+            
+            result = subprocess.run(install_cmd,
+                               startupinfo=startupinfo,
+                               capture_output=True,
+                               text=True,
+                               timeout=180)
+            
+            # Clean up temp file
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+            
+            # Verify installation
+            if result.returncode == 0:
+                self.update_status("Verifying installation...", 80)
+                winget_check = subprocess.run(['winget', '--version'],
+                                         capture_output=True,
+                                         text=True,
+                                         startupinfo=startupinfo,
+                                         timeout=10)
+                
+                if winget_check.returncode == 0:
+                    self.update_status("Winget installed successfully!", 100)
+                    print("Winget is now working!")
+                    if self.root:
+                        self.root.quit()
+                    return
+            
+            # If installation failed, try Microsoft Store
+            print("Direct installation failed, trying Microsoft Store...")
+            self.update_status("Opening Microsoft Store...", 50)
+            
+            store_cmd = [
+                'powershell', '-Command',
+                'Start-Process "ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1"'
+            ]
+            
+            subprocess.run(store_cmd, startupinfo=startupinfo, timeout=10)
+            messagebox.showinfo("Install Winget", 
+                            "Please install the 'App Installer' from the Microsoft Store.\n" +
+                            "After installation completes, close and restart the application.")
+            
+        except Exception as e:
+            print(f"Installation failed: {str(e)}")
+            messagebox.showerror("Installation Error",
+                             "Failed to install winget.\n" +
+                             "Please download from: github.com/microsoft/winget-cli/releases")
+        
+        if self.root:
+            self.root.quit()
+
+    def check_winget(self):
+        """Check if winget is installed and accessible, install or update if needed"""
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+        # Check if winget works
+        print("Checking if winget works...")
+        try:
+            winget_check = subprocess.run(['winget', '--version'],
+                                     capture_output=True,
+                                     text=True,
+                                     startupinfo=startupinfo,
+                                     timeout=10)
+            
+            if winget_check.returncode == 0:
+                print("Winget is working!")
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            print(f"Winget check failed: {str(e)}")
+                
+        # Start download in separate thread
+        print("Winget not found, starting download\nPlease Wait...")
+        self.update_status("Starting winget download...", 40)
+        self.download_thread = threading.Thread(target=self.download_winget)
+        self.download_thread.daemon = True
+        self.download_thread.start()
+        
+        return False
 
     def run(self):
         """Run the initialization process"""
@@ -177,16 +316,10 @@ class InitializationUI:
                     self.root = None
                 return False
             
-            self.update_status("Setup completed successfully!", 100)
-            self.setup_complete = True
-            self.exit_button.configure(state=tk.NORMAL)
-            self.root.mainloop()
-            
-            # Clean up window if it still exists
+            # Just exit if winget is installed
             if self.root:
                 self.root.destroy()
                 self.root = None
-                
             return True
             
         except Exception as e:
@@ -530,29 +663,43 @@ class MTechWinTool:
     }
 
     def __init__(self):
-        # Initialize software descriptions first
+        # Initialize settings with default values
+        self.settings = {
+            "auto_refresh": True,           # Auto refresh software status
+            "start_with_windows": False,     # Don't start with Windows by default
+            "show_minimize_message": True   # Show minimize message by default
+        }
+        
+        # Load settings first
+        self._load_settings()
+        
+        # Initialize software descriptions and status
         self.software_descriptions = {}
         self.software_status = {}
-        self.status_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "software_status.json")
+        
+        # Set status file path if auto-refresh is disabled
+        if not self.settings.get("auto_refresh", True):
+            app_data = os.getenv('LOCALAPPDATA')  # Changed from APPDATA to LOCALAPPDATA
+            app_folder = os.path.join(app_data, 'MTechWinTool')
+            os.makedirs(app_folder, exist_ok=True)
+            self.status_file = os.path.join(app_folder, "software_status.json")
         
         # Load software descriptions
         for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-            for software_name, software_info in software_dict.items():
-                self.software_descriptions[software_name] = software_info['description']
-        
-        # Load saved software status
-        self.load_software_status()
-        
+            self.software_descriptions[category] = []
+            for name, description in software_dict.items():
+                self.software_descriptions[category].append(Software(name, description))
+                
+        # Load saved status if auto-refresh is disabled
+        if not self.settings.get("auto_refresh", True):
+            self.load_software_status()
+
         # Initialize main window and other variables
         self.root = tk.Tk()
         self._setup_window()
         
         # Set window close protocol
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_button)
-        
-        # Check if we need to refresh software status
-        if not os.path.exists(self.status_file):
-            self.root.after(500, self.refresh_software_status)
         
         # Initialize monitoring variables
         self.monitoring = True
@@ -571,59 +718,16 @@ class MTechWinTool:
         # Setup tray icon
         self._setup_tray()
         
-        # Load settings
-        self._load_settings()
-        
-    def load_software_status(self):
-        self.software_status = {}
-        if os.path.exists('software_status.json'):
-            try:
-                with open('software_status.json', 'r') as f:
-                    self.software_status = json.load(f)
-            except Exception as e:
-                print(f"Error loading software status: {e}")
-
-    def save_software_status(self):
-        """Save software status to file"""
-        # Don't save if skip flag is set
-        if hasattr(self, 'skip_status_save') and self.skip_status_save:
-            return
-            
-        try:
-            with open('software_status.json', 'w') as f:
-                json.dump(self.software_status, f, indent=4)
-        except Exception as e:
-            print(f"Error saving software status: {str(e)}")
-
-    def update_software_status(self, software_name, is_installed):
-        """Update status for a specific software"""
-        # Update in-memory status
-        self.software_status[software_name] = is_installed
-        
-        # Update UI if the software is in the tree
-        def update_ui():
-            if software_name in self.software_items:
-                item = self.software_items[software_name]
-                if is_installed:
-                    self.software_tree.item(item, tags=('installed',))
-                else:
-                    self.software_tree.item(item, tags=())
-        
-            # Save to file
-            try:
-                with open('software_status.json', 'w') as f:
-                    json.dump(self.software_status, f, indent=4)
-            except Exception as e:
-                print(f"Error saving software status: {str(e)}")
-    
-        # Schedule UI update in main thread if not already in it
-        if threading.current_thread() is threading.main_thread():
-            update_ui()
-        else:
-            self.root.after(0, update_ui)
-
     def _setup_window(self):
-        """Set up the main window"""        
+        """Setup the main window and UI elements"""
+        # Delete software_status.json if auto-refresh is enabled
+        if self.settings.get("auto_refresh", True) and hasattr(self, 'status_file'):
+            try:
+                if os.path.exists(self.status_file):
+                    os.remove(self.status_file)
+            except Exception as e:
+                print(f"Error deleting software status file: {str(e)}")
+        
         # Set window size and center it
         window_width = 1024
         window_height = 768
@@ -641,7 +745,7 @@ class MTechWinTool:
         # Set window position
         self.first_map = True
         
-        # Apply theme
+        # Apply permanent dark theme
         sv_ttk.set_theme("dark")
         self._configure_styles()
         
@@ -683,17 +787,10 @@ class MTechWinTool:
                        background='#2b2b2b',
                        thickness=15)
 
-    def toggle_theme(self):
-        if self.theme_var.get():
-            sv_ttk.set_theme("dark")
-        else:
-            sv_ttk.set_theme("light")
-    
     def toggle_network_fields(self):
-        state = "disabled" if self.network_type_var.get() == "dhcp" else "normal"
-        for entry in [self.ip_entry, self.subnet_entry, self.gateway_entry, self.dns_entry]:
-            entry.configure(state=state)
-    
+            state = "disabled" if self.network_type_var.get() == "dhcp" else "normal"
+            for entry in [self.ip_entry, self.subnet_entry, self.gateway_entry, self.dns_entry]:
+                entry.configure(state=state)
     def _finish_window_setup(self):
         # Overrideredirect to keep custom window style
         self.root.overrideredirect(True)
@@ -762,6 +859,7 @@ class MTechWinTool:
         self.tab_tools = ttk.Frame(self.notebook)
         self.tab_autoinstall = ttk.Frame(self.notebook)
         self.tab_autounattend = ttk.Frame(self.notebook)
+        self.tab_settings = ttk.Frame(self.notebook)  # New Settings tab
         self.tab_about = ttk.Frame(self.notebook)
         
         # Add tabs to notebook
@@ -770,6 +868,7 @@ class MTechWinTool:
         self.notebook.add(self.tab_tools, text="Tools")
         self.notebook.add(self.tab_autoinstall, text="Install")
         self.notebook.add(self.tab_autounattend, text="Unattend")
+        self.notebook.add(self.tab_settings, text="Settings")  # Add Settings tab
         self.notebook.add(self.tab_about, text="About")
         
         # Setup tab contents
@@ -778,6 +877,7 @@ class MTechWinTool:
         self.setup_tools()
         self.setup_autoinstall()
         self.setup_autounattend()
+        self.setup_settings()  # Add setup_settings method call
         self.setup_about()
 
     def _start_monitoring(self):
@@ -1193,14 +1293,6 @@ class MTechWinTool:
             # Expand the category node
             self.software_tree.item(category_node, open=True)
         
-        # Apply saved status
-        if hasattr(self, 'software_status'):
-            for software_name, is_installed in self.software_status.items():
-                if software_name in self.software_items:
-                    item = self.software_items[software_name]
-                    if is_installed:
-                        self.software_tree.item(item, tags=('installed',))
-        
         # Configure tag for installed items
         self.software_tree.tag_configure('installed', foreground='green')
         
@@ -1215,10 +1307,9 @@ class MTechWinTool:
         self.software_tree.bind("<Button-3>", self.show_context_menu)
         
         # Auto-check status if no status file exists
-        if not os.path.exists('software_status.json'):
-            self.status_label.config(text="Starting software status check...")
-            self.progress_bar.start(10)
-            self.root.after(500, self.refresh_software_status)
+        self.status_label.config(text="Starting software status check...")
+        self.progress_bar.start(10)
+        self.root.after(500, self.refresh_software_status)
     
     def setup_autounattend(self):
         # Create main container frame
@@ -1702,145 +1793,93 @@ class MTechWinTool:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save XML: {str(e)}")
     
-    def update_software_status(self, software_name, is_installed):
-        """Update status for a specific software"""
-        # Update in-memory status
-        self.software_status[software_name] = is_installed
-        
-        # Update UI if the software is in the tree
-        def update_ui():
-            if software_name in self.software_items:
-                item = self.software_items[software_name]
-                if is_installed:
-                    self.software_tree.item(item, tags=('installed',))
-                else:
-                    self.software_tree.item(item, tags=())
-        
-            # Save to file
-            try:
-                with open('software_status.json', 'w') as f:
-                    json.dump(self.software_status, f, indent=4)
-            except Exception as e:
-                print(f"Error saving software status: {str(e)}")
+    def update_software_status(self, software_name=None, is_installed=None):
+        """Update software installation status"""
+        try:
+            if software_name is not None and is_installed is not None:
+                # Update single software status
+                self.software_status[software_name] = is_installed
+                
+                # Update UI if the software is in the tree
+                if hasattr(self, 'software_items') and software_name in self.software_items:
+                    item = self.software_items[software_name]
+                    if is_installed:
+                        self.software_tree.item(item, tags=('installed',))
+                    else:
+                        self.software_tree.item(item, tags=())
+            else:
+                # Update all software status
+                installed_software = self.get_installed_software()
+                
+                # Update status for each software
+                for category, software_list in self.software_descriptions.items():
+                    for software in software_list:
+                        software.update_status(installed_software)
+                        
+            # Save status if auto-refresh is disabled
+            if not self.settings.get("auto_refresh", True):
+                self.save_software_status()
+                    
+        except Exception as e:
+            print(f"Error updating software status: {str(e)}")
+            if hasattr(self, 'status_label'):
+                self.status_label.config(text="Error checking software status")
     
-        # Schedule UI update in main thread if not already in it
-        if threading.current_thread() is threading.main_thread():
-            update_ui()
-        else:
-            self.root.after(0, update_ui)
-
     def load_software_status(self):
         self.software_status = {}
-        if os.path.exists('software_status.json'):
+        if hasattr(self, 'status_file') and os.path.exists(self.status_file):
             try:
-                with open('software_status.json', 'r') as f:
+                with open(self.status_file, 'r') as f:
                     self.software_status = json.load(f)
             except Exception as e:
-                print(f"Error loading software status: {e}")
+                print(f"Error loading software status: {str(e)}")
 
     def save_software_status(self):
         """Save software status to file"""
-        # Don't save if skip flag is set
-        if hasattr(self, 'skip_status_save') and self.skip_status_save:
-            return
-            
-        try:
-            with open('software_status.json', 'w') as f:
-                json.dump(self.software_status, f, indent=4)
-        except Exception as e:
-            print(f"Error saving software status: {str(e)}")
-
-    def install_selected_software(self):
-        """Install selected software using winget"""
-        selected = self.software_tree.selection()
-        if not selected:
-            messagebox.showinfo("Select Software", "Please select software to install")
-            return
-
-        # Filter out category nodes and get valid software selections
-        software_to_install = []
-        for item in selected:
-            item_data = self.software_tree.item(item)
-            values = item_data.get("values", [])
-            
-            # Skip if it's a category (no values) or not enough values
-            if not values or len(values) < 2:
-                continue
-                
-            software_name = values[0]
-            # Find the category for this software
-            for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-                if software_name in software_dict:
-                    software_to_install.append((item, category, software_name))
-                    break
-
-        if not software_to_install:
-            messagebox.showinfo("Select Software", "Please select valid software to install")
-            return
-        
-        # Create progress window
-        progress_window = Toplevel(self.root)
-        progress_window.title("Installing Software")
-        progress_window.geometry("400x150")
-        
-        # Center the window
-        progress_window.transient(self.root)
-        progress_window.grab_set()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 150) // 2
-        progress_window.geometry(f"+{x}+{y}")
-        
-        # Add progress elements
-        frame = ttk.Frame(progress_window, padding="20")
-        frame.pack(fill='both', expand=True)
-        
-        status_label = ttk.Label(frame, text="Starting installation...", wraplength=350)
-        status_label.pack(fill='x', pady=(0, 10))
-        
-        progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=350)
-        progress_bar.pack(fill='x', pady=(0, 10))
-        progress_bar.start(10)
-        
-        def install_software():
+        if hasattr(self, 'status_file'):
             try:
-                for item, category, software_name in software_to_install:
-                    winget_id = self.SOFTWARE_CATEGORIES[category][software_name]['id']
-                    try:
-                        status_label.config(text=f"Installing {software_name}...")
-                        
-                        # Run winget install
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                        
-                        result = subprocess.run(
-                            ["winget", "install", "-e", "--id", winget_id, "--accept-source-agreements", "--accept-package-agreements"],
-                            capture_output=True,
-                            text=True,
-                            startupinfo=startupinfo
-                        )
-                        
-                        if result.returncode == 0:
-                            # Update status and UI
-                            self.update_software_status(software_name, True)
-                            status_label.config(text=f"Successfully installed {software_name}")
-                            print(f"Successfully installed {software_name}")
-                        else:
-                            error_msg = f"Failed to install {software_name}. Error: {result.stderr}"
-                            status_label.config(text=error_msg)
-                            print(error_msg)
-                            messagebox.showerror("Installation Error", error_msg)
-                    except Exception as e:
-                        error_msg = f"Error installing {software_name}: {str(e)}"
-                        status_label.config(text=error_msg)
-                        print(error_msg)
-                        messagebox.showerror("Installation Error", error_msg)
-            finally:
-                # Stop progress and close window
-                progress_bar.stop()
-                progress_window.after(1500, progress_window.destroy)
-        
-        # Run installation in a separate thread
-        threading.Thread(target=install_software, daemon=True).start()
+                with open(self.status_file, 'w') as f:
+                    json.dump(self.software_status, f, indent=4)
+            except Exception as e:
+                print(f"Error saving software status: {str(e)}")
+
+    def check_software_status(self):
+        """Check software installation status"""
+        if self.settings.get("auto_refresh", True):
+            # Always update if auto-refresh is enabled
+            self.update_software_status()
+        else:
+            # Check file if auto-refresh is disabled
+            if not hasattr(self, 'status_file') or not os.path.exists(self.status_file):
+                self.update_software_status()
+            else:
+                self.load_software_status()
+
+    def refresh_software_status(self):
+        """Refresh the software status display"""
+        if self.settings.get("auto_refresh", True):
+            # Always update if auto-refresh is enabled
+            self.update_software_status()
+        else:
+            # Use existing status if available
+            self.check_software_status()
+            
+        self.update_software_tree()
+        self.status_label.config(text="Software status check complete")
+        self.progress_bar.stop()
+        self.progress_bar.grid_remove()
+
+    def update_software_tree(self):
+        """Update software tree with current status"""
+        for category, software_list in self.software_descriptions.items():
+            for software in software_list:
+                software_name = software.name
+                if software_name in self.software_status:
+                    is_installed = self.software_status[software_name]
+                    if is_installed:
+                        self.software_tree.item(self.software_items[software_name], tags=('installed',))
+                    else:
+                        self.software_tree.item(self.software_items[software_name], tags=())
     
     def toggle_category(self, event):
         item = self.software_tree.identify('item', event.x, event.y)
@@ -1956,6 +1995,99 @@ class MTechWinTool:
         # Run check in background thread
         threading.Thread(target=check_status, daemon=True).start()
     
+    def install_selected_software(self):
+        """Install selected software using winget"""
+        selected = self.software_tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Software", "Please select software to install")
+            return
+
+        # Filter out category nodes and get valid software selections
+        software_to_install = []
+        for item in selected:
+            item_data = self.software_tree.item(item)
+            values = item_data.get("values", [])
+            
+            # Skip if it's a category (no values) or not enough values
+            if not values or len(values) < 2:
+                continue
+                
+            software_name = values[0]
+            # Find the category for this software
+            for category, software_dict in self.SOFTWARE_CATEGORIES.items():
+                if software_name in software_dict:
+                    software_to_install.append((item, category, software_name))
+                    break
+
+        if not software_to_install:
+            messagebox.showinfo("Select Software", "Please select valid software to install")
+            return
+        
+        # Create progress window
+        progress_window = Toplevel(self.root)
+        progress_window.title("Installing Software")
+        progress_window.geometry("400x150")
+        
+        # Center the window
+        progress_window.transient(self.root)
+        progress_window.grab_set()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 150) // 2
+        progress_window.geometry(f"+{x}+{y}")
+        
+        # Add progress elements
+        frame = ttk.Frame(progress_window, padding="20")
+        frame.pack(fill='both', expand=True)
+        
+        status_label = ttk.Label(frame, text="Starting installation...", wraplength=350)
+        status_label.pack(fill='x', pady=(0, 10))
+        
+        progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=350)
+        progress_bar.pack(fill='x', pady=(0, 10))
+        progress_bar.start(10)
+        
+        def install_software():
+            try:
+                for item, category, software_name in software_to_install:
+                    winget_id = self.SOFTWARE_CATEGORIES[category][software_name]['id']
+                    try:
+                        status_label.config(text=f"Installing {software_name}...")
+                        
+                        # Run winget install
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        
+                        result = subprocess.run(
+                            ["winget", "install", "-e", "--id", winget_id, "--accept-source-agreements", "--accept-package-agreements"],
+                            capture_output=True,
+                            text=True,
+                            startupinfo=startupinfo,
+                            timeout=180  # 3 minute timeout
+                        )
+                        
+                        if result.returncode == 0:
+                            # Update status and UI
+                            self.update_software_status(software_name, True)
+                            status_label.config(text=f"Successfully installed {software_name}")
+                            print(f"Successfully installed {software_name}")
+                        else:
+                            error_msg = f"Failed to install {software_name}. Error: {result.stderr}"
+                            status_label.config(text=error_msg)
+                            print(error_msg)
+                            messagebox.showerror("Installation Error", error_msg)
+                    except Exception as e:
+                        error_msg = f"Error installing {software_name}: {str(e)}"
+                        status_label.config(text=error_msg)
+                        print(error_msg)
+                        messagebox.showerror("Installation Error", error_msg)
+            finally:
+                # Stop progress and close window
+                progress_bar.stop()
+                progress_window.after(1500, progress_window.destroy)
+                
+        # Run installation in a separate thread
+        threading.Thread(target=install_software, daemon=True).start()
+    
     def update_stats(self):
         while self.monitoring:
             try:
@@ -2046,6 +2178,47 @@ class MTechWinTool:
             self.root.geometry(f"{screen_width}x{screen_height}+0+0")
             self.is_maximized = True
     
+    def setup_settings(self):
+        # Create main frame with padding
+        main_frame = ttk.Frame(self.tab_settings, padding=20)
+        main_frame.pack(fill="both", expand=True)
+        
+        # Left side - App Settings
+        left_frame = ttk.LabelFrame(main_frame, text=" 🎨 Appearance & Behavior ", padding=15)
+        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        
+        # Startup behavior
+        startup_frame = ttk.Frame(left_frame)
+        startup_frame.pack(fill="x", pady=10)
+        ttk.Label(startup_frame, text="🚀", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
+        ttk.Label(startup_frame, text="Startup:", font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.startup_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(left_frame, text="Start with Windows", variable=self.startup_var).pack(fill="x", pady=2)
+        
+        # Right side - Advanced Settings
+        right_frame = ttk.LabelFrame(main_frame, text=" ⚙️ Advanced Settings ", padding=15)
+        right_frame.pack(side="right", fill="both", expand=True, padx=(10, 0))
+        
+        # General advanced settings
+        settings_list = [
+            ("🔄", "Auto-refresh Status", "auto_refresh", "Automatically refresh software status")
+        ]
+        
+        for icon, label, key, desc in settings_list:
+            setting_frame = ttk.Frame(right_frame)
+            setting_frame.pack(fill="x", pady=5)
+            ttk.Label(setting_frame, text=icon, font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
+            ttk.Label(setting_frame, text=label + ":", font=("Segoe UI", 10, "bold")).pack(side="left")
+            var = tk.BooleanVar(value=self.settings.get(key, True))
+            ttk.Checkbutton(setting_frame, text=desc, variable=var).pack(side="right")
+            setattr(self, f"{key}_var", var)
+        
+        # Save button
+        save_frame = ttk.Frame(main_frame)
+        save_frame.pack(side="bottom", fill="x", pady=(20, 0))
+        ttk.Button(save_frame, text="Save Settings", command=lambda: self._save_settings(show_message=True), 
+                   style="Accent.TButton").pack(side="right")
+    
     def setup_about(self):
         # Create main frame with padding
         main_frame = ttk.Frame(self.tab_about, padding=20)
@@ -2064,7 +2237,7 @@ class MTechWinTool:
     
         
         # Version
-        version = ttk.Label(left_frame, text="Beta Version 0.0.2a", 
+        version = ttk.Label(left_frame, text="Beta Version 0.0.3a", 
                           font=("Segoe UI", 12))
         version.pack(pady=(0, 20))
         
@@ -2151,13 +2324,12 @@ class MTechWinTool:
                     image = Image.open("assets/icon.ico")
                     menu = pystray.Menu(
                         pystray.MenuItem("Show", self._show_window),
-                        pystray.MenuItem("Exit", self._quit_app)
                     )
                     self.icon = pystray.Icon("MTech WinTool", image, "MTech WinTool", menu)
                     self.icon_thread = threading.Thread(target=self.icon.run, daemon=True)
                     self.icon_thread.start()
                 except Exception as e:
-                    print(f"Failed to create system tray icon: {e}")
+                    print(f"Failed to create tray icon: {str(e)}")
                     self.icon = None
             
             # Start the main event loop
@@ -2173,41 +2345,17 @@ class MTechWinTool:
     def cleanup(self):
         """Clean up resources before exit"""
         try:
-            # Set flag to stop background operations
+            # Stop monitoring
             self.monitoring = False
             
-            # Immediately terminate any running processes
-            if hasattr(self, 'ohm_process') and self.ohm_process:
-                try:
-                    self.ohm_process.kill()
-                except:
-                    pass
-
-            # Force stop system tray icon
-            if hasattr(self, 'icon') and self.icon:
-                try:
-                    self.icon.stop()
-                except:
-                    pass
-
-            # Quick save of critical data
-            try:
-                self._save_settings()
-                # Only save software status if not skipping
-                if not hasattr(self, 'skip_status_save') or not self.skip_status_save:
-                    self.save_software_status()
-            except:
-                pass
-
-            # Get current process ID
-            current_pid = os.getpid()
-            
-            # Use Windows API to terminate the process
-            import ctypes
-            kernel32 = ctypes.WinDLL('kernel32')
-            handle = kernel32.OpenProcess(1, 0, current_pid)
-            kernel32.TerminateProcess(handle, 0)
-            
+            # Remove tray icon if it exists
+            if hasattr(self, 'tray_icon'):
+                self.tray_icon.stop()
+                
+            # Destroy main window
+            if self.root:
+                self.root.destroy()
+                
         except:
             # If anything fails, still force exit
             os._exit(0)
@@ -2220,32 +2368,16 @@ class MTechWinTool:
     def _quit_app(self, icon, item):
         """Quit the application from system tray"""
         icon.stop()
-        self.root.after(0, self._on_close_button)
+        self.cleanup()
 
     def _on_closing(self, event=None):
         """Legacy close handler for protocol"""
-        self._on_close_button()
-    
+        self.cleanup()
+        
     def _on_close_button(self):
         """Handle window close button click"""
-        # Check if status label shows we're checking software or uninstalling
-        if (hasattr(self, 'status_label') and 
-            hasattr(self.status_label, 'cget') and 
-            ('Checking' in self.status_label.cget('text') or 'Uninstalling' in self.status_label.cget('text'))):
-            # Show warning if we're checking software status or uninstalling
-            if messagebox.askokcancel("Quit", "MTech WinTool is still processing.\nClosing now may lead to inconsistent software status.\nDo you still want to quit?"):
-                # Set flag to prevent saving software status
-                self.skip_status_save = True
-                # Delete software_status.json to force a fresh check next time
-                try:
-                    if os.path.exists('software_status.json'):
-                        os.remove('software_status.json')
-                except Exception as e:
-                    print(f"Error deleting software_status.json: {str(e)}")
-                self.cleanup()
-        else:
-            # Just cleanup and exit if we're not checking status
-            self.cleanup()
+        self.cleanup()
+        self.root.quit()
 
     def _on_map(self, event):
         if event.widget is self.root:
@@ -2273,12 +2405,11 @@ class MTechWinTool:
             
             self.root.withdraw()
             self.minimized = True
-
+    
     def _setup_tray(self):
         # Create tray icon menu
         menu = (
             pystray.MenuItem('Open', self._show_window),
-            pystray.MenuItem('Minimize', self.minimize_window),
         )
         
         try:
@@ -2306,29 +2437,72 @@ class MTechWinTool:
     
     def _load_settings(self):
         """Load application settings from settings.json"""
-        self.settings_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+        app_data = os.getenv('LOCALAPPDATA')  # Changed from APPDATA to LOCALAPPDATA
+        app_folder = os.path.join(app_data, 'MTechWinTool')
+        os.makedirs(app_folder, exist_ok=True)
+        self.settings_file = os.path.join(app_folder, "settings.json")
         self.settings = {
-            "show_minimize_message": True  # Default to show the message
+            "auto_refresh": True,           # Auto refresh software status
+            "start_with_windows": False,     # Don't start with Windows by default
+            "show_minimize_message": True   # Show minimize message by default
         }
         
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r') as f:
-                    self.settings.update(json.load(f))
+                    loaded_settings = json.load(f)
+                    self.settings.update(loaded_settings)
         except Exception as e:
             print(f"Error loading settings: {str(e)}")
-            
-    def _save_settings(self):
-        """Save application settings to settings.json"""
+
+    def _save_settings(self, show_message=False):
+        """Save settings to file"""
         try:
+            # Update settings from UI variables
+            self.settings.update({
+                "auto_refresh": self.auto_refresh_var.get(),
+                "start_with_windows": self.startup_var.get()
+            })
+            
+            # Save to file
             with open(self.settings_file, 'w') as f:
                 json.dump(self.settings, f, indent=4)
+                
+            # Apply startup setting
+            self._apply_startup_setting()
+                
+            if show_message:
+                messagebox.showinfo("Success", "Settings saved successfully!")
         except Exception as e:
-            print(f"Error saving settings: {str(e)}")
+            if show_message:
+                messagebox.showerror("Error", f"Failed to save settings: {str(e)}")
 
-    def _setup_environment(self):
-        """Set up the environment for the application"""
-        self._check_winget()
+    def _apply_startup_setting(self):
+        """Apply the startup with Windows setting"""
+        try:
+            import winreg
+            startup_key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0,
+                winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE
+            )
+            
+            app_path = os.path.abspath(sys.argv[0])
+            key_name = "MTechWinTool"
+            
+            try:
+                if self.settings["start_with_windows"]:
+                    winreg.SetValueEx(startup_key, key_name, 0, winreg.REG_SZ, f'"{app_path}"')
+                else:
+                    winreg.DeleteValue(startup_key, key_name)
+            except WindowsError as e:
+                if e.winerror != 2:  # Ignore "not found" error when trying to delete
+                    raise
+            finally:
+                winreg.CloseKey(startup_key)
+        except Exception as e:
+            print(f"Error applying startup setting: {str(e)}")
     
     def _init_wmi(self):
         try:
@@ -2447,9 +2621,6 @@ class MTechWinTool:
                 # Stop progress and close window
                 progress_bar.stop()
                 progress_window.after(1500, progress_window.destroy)
-        
-        # Run uninstallation in a separate thread
-        threading.Thread(target=uninstall_software, daemon=True).start()
     
 if __name__ == "__main__":
     # First check if winget is installed
