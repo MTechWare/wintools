@@ -14,7 +14,7 @@ A modern, automated Windows utility application that simplifies system monitorin
 ### Quick Install (PowerShell)
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/MTechWare/wintools/releases/download/release/MTechWinTool.exe" -OutFile "MTechWinTool.exe"; Start-Process "MTechWinTool.exe"
+Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.3a/MTechWinTool.exe -OutFile MTechWinTool.exe; Start-Process .\MTechWinTool.exe
 ```
 
 ### Alternative Installation
