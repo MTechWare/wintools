@@ -1,25 +1,66 @@
 # MTech WinTool (Beta 0.0.3a)
 
-A modern, automated Windows utility application that simplifies system monitoring and software management. Built with Python and tkinter, featuring an elegant Sun Valley theme and automated setup process.
+<div align="center">
 
-## 🔧 Requirements
+A modern, automated Windows utility application that simplifies system monitoring and software management.
+Built with Python and tkinter, featuring an elegant Sun Valley theme.
 
-- Windows 10/11
-- Python 3.11 or higher
-- Winget package manager
-- Administrator privileges (for some features)
+</div>
 
-## 📥 Installation
+## 🚀 Quick Start
 
-### Quick Install (PowerShell)
+### One-Click Install (PowerShell)
 
 ```powershell
 Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.3a/MTechWinTool.exe -OutFile MTechWinTool.exe; Start-Process .\MTechWinTool.exe
 ```
 
-### Alternative Installation
+### Manual Download
 
 Download the latest release from [GitHub Releases](https://github.com/MTechWare/wintools/releases) and run the executable.
+
+## 🔧 Requirements
+
+- Windows 10/11
+- Python 3.11+ (for building from source)
+- Winget package manager
+- Administrator privileges (for some features)
+
+## 💡 Pro Tips
+- right-click uninstallation of packages
+- Use system tray to keep the tool running in background
+- Use category filters to find software quickly
+- Keep the tool updated for best performance
+
+## ✨ Features
+
+### 🛠️ Winget Feature
+- Automatic winget installation if not present
+- Smart package detection shows already installed software
+- Real-time status tracking of installed packages
+- Batch processing for faster package checks
+- Silent installation support
+- Seamless integration with Windows Package Manager
+
+### 💻 System Management
+- Real-time CPU, Memory, and Disk monitoring
+- Detailed hardware information
+- System optimization tools
+- Windows unattended installation configuration
+
+### 📦 Software Management
+- One-click software installation via winget
+- Pre-configured software categories
+  - Browsers (Chrome, Firefox, Opera)
+  - Development Tools (VS Code, Git, Python)
+  - Code Editors (IntelliJ, PyCharm, Sublime)
+  - Utilities (7-Zip, VLC, Notepad++)
+
+### 🎨 Modern UI
+- Sleek Sun Valley theme
+- Dark mode
+- System tray integration
+- Real-time status updates
 
 ## 📸 Screenshots
 
@@ -28,112 +69,49 @@ Download the latest release from [GitHub Releases](https://github.com/MTechWare/
 | System Monitoring | Software Installation |
 |:---:|:---:|
 | ![System](screenshots/wintool_System.png) | ![Install](screenshots/wintool_Install.png) |
-| *Real-time CPU, Memory, and Disk monitoring* | *Easy software installation with parallel status checking* |
+| *Real-time system monitoring* | *Easy software installation* |
 
 | Hardware Information | Windows Configuration |
 |:---:|:---:|
 | ![Hardware](screenshots/wintool_Hardware.png) | ![Config](screenshots/wintool_Unattend.png) |
-| *Detailed hardware monitoring and system info* | *Windows unattended installation configuration* |
+| *Hardware monitoring* | *Windows configuration* |
 
 </div>
 
 ## 🆕 What's New in Beta 0.0.3a
 
-### New Features
-- Added Settings tab
+### ✨ New Features
+- Added Settings tab for better customization
+- Enhanced minimize to tray with first-time notification
+- Improved settings persistence
 
-### Performance Improvements
-- Optimized software status checking with batch processing (major improvement)
+### 🔧 Improvements
+- Major optimization in software status checking
+- Silent mode for software operations
+- Better timeout handling
+- Smaller executable size when building from source
 
-### Enhanced Software Management
-- Added silent mode for software uninstallation
-- Added timeout handling for installation/uninstallation
-- Improved software installation reliability
-
-### UI Improvements
-- Enhanced minimize to tray behavior with first-time notification
-- Improved settings persistence and management
-
-### Bug Fixes
+### 🐛 Bug Fixes
 - Fixed software status refresh performance
-- Improved error handling during installation/uninstallation
 - Enhanced thread safety in UI updates
-- When building from source, the executable is smaller
-
-## 💡 Tips
-
-- Use the system tray feature to keep the tool running in background
-- Check the detailed error messages if software installation fails
-- Utilize the category filters to find software quickly
-- Keep the tool updated for best performance
-
-## 🌟 Key Features
-
-### 🔄 Automated Setup
-- No manual configuration needed
-- Auto-checks for winget availability
-- Streamlined initialization process
-- Fixed Winget auto-installation
-
-### 🎨 Modern UI
-- Sleek Sun Valley theme with custom title bar
-- Responsive tabbed interface
-- Dark/Light mode support
-- System tray integration with minimize to tray
-- Real-time status updates
-- Thread-safe UI operations
-- Graceful exit handling
-
-### 📊 System Monitoring
-- Real-time CPU usage
-- Memory usage tracking
-- Disk space monitoring
-- System information display
-- Background monitoring with optimized performance
-- Efficient thread management
-
-### 📦 Software Management
-- Parallel software status checking (up to 10 concurrent checks)
-- One-click software installation via winget
-- Real-time installation status updates
-- Pre-configured software categories:
-  - Browsers (Chrome, Firefox, Opera)
-  - Development Tools (VS Code, Git, Python)
-  - Code Editors (IntelliJ, PyCharm, Sublime)
-  - Utilities (7-Zip, VLC, Notepad++)
-
-### ⚙️ Windows Configuration
-- Unattended Windows installation XML generator
-- System optimization tools
-- Hardware monitoring integration
-
-### Manual Installation (From Source)
-
-1. Install Python 3.11 or higher
-2. Install required packages use install.cmd
-3. Run the application:
-   ```bash
-   python main.py
-   ```
+- Improved error handling
 
 ## 🛠️ Building from Source
 
-1. **Clone the Repository**
+1. Clone the repository
    ```bash
    git clone https://github.com/MTechWare/wintools.git
-   cd MTech_WinTool
    ```
 
-2. **Install Dependencies**
+2. Install dependencies
    ```bash
    install.cmd
    ```
 
-3. **Build the Executable**
+3. Build executable
    ```bash
    Build.cmd
    ```
-   The executable will be created in the `dist` directory.
 
 ## 📝 License
 
@@ -152,4 +130,8 @@ Feel free to:
 
 ---
 
+<div align="center">
+
 Made with ❤️ by MTechWare
+
+</div>
