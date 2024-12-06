@@ -7,8 +7,6 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=for-the-badge)](https://github.com/yourusername/MTechWinTool)
 
-<img src="screenshot.png" alt="MTech WinTool Screenshot" width="800"/>
-
 ### 🎯 A Modern Windows System Management Suite
 
 *Streamline your Windows experience with an elegant, all-in-one system management tool.*
@@ -31,8 +29,7 @@
 ### Option 1: Direct Download (Recommended)
 
 ```powershell
-# Download and run using PowerShell
-Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.3a/MTechWinTool.exe -OutFile MTechWinTool.exe
+Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.4a/MTech_WinTool.exe -OutFile MTechWinTool.exe
 Start-Process .\MTechWinTool.exe
 ```
 
