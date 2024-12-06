@@ -29,8 +29,7 @@
 ### Option 1: Direct Download (Recommended)
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.4a/MTech_WinTool.exe -OutFile MTechWinTool.exe
-Start-Process .\MTechWinTool.exe
+Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.4a/MTech_WinTool.exe -OutFile MTechWinTool.exe; Start-Process .\\MTechWinTool.exe
 ```
 
 ### Option 2: From Releases
