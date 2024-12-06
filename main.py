@@ -1,21 +1,11 @@
-#!/usr/bin/env python3
 """
 MTechWinTool - Windows System Utility
-Version: Beta 0.0.3a
+Version: Beta 0.0.4a
 
 A modern Windows utility for system monitoring and software management.
-This application requires administrative privileges for certain operations:
+This application might require administrative privileges for certain operations:
 - System monitoring (CPU, Memory, Disk usage)
 - Software installation via winget
-
-Changes in Beta 0.0.2a:
-- Improved software installation reliability
-- Added silent mode for software uninstallation
-- Added timeout handling for installation/uninstallation
-- Enhanced error messages and status display
-- Fixed software status refresh performance (major improvement)
-- Removed dependency installation step
-- Optimized batch processing for software status checks
 
 Note: This application may be flagged by antivirus software due to its
 system monitoring capabilities. This is a false positive. The source code
@@ -27,2627 +17,1380 @@ Repository: https://github.com/MTechWare/wintools
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, Toplevel, Label, filedialog
+from tkinter import ttk, messagebox, filedialog
 import sv_ttk
-import psutil
-import platform
-import win32api
-import win32con
+import threading
+import queue
+from package_operations import PackageOperations
+from system_health import SystemHealth
+from system_tools import SystemTools
+from unattend_creator import UnattendCreator
 import os
 import sys
-import json
-from PIL import Image
-import threading
-import time
-import wmi
+import platform
 from datetime import datetime
-import requests
-from tqdm import tqdm
 import subprocess
-import webbrowser
-from bs4 import BeautifulSoup
-import zipfile
-import pkg_resources
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import pystray
-import ctypes
 
-class SingleInstance:
-    def __init__(self, name):
-        self.mutexname = name
-        self.mutex = None
-        
-    def __enter__(self):
-        try:
-            import win32event
-            import win32api
-            import winerror
-            import win32con
-            
-            self.mutex = win32event.CreateMutex(None, False, self.mutexname)
-            if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
-                win32api.CloseHandle(self.mutex)
-                return False
-            return True
-        except ImportError:
-            return True  # Skip mutex check if win32event is not available
-            
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.mutex:
-            try:
-                import win32api
-                win32api.CloseHandle(self.mutex)
-            except:
-                pass
-
-class Software:
-    def __init__(self, name, description):
-        self.name = name
-        self.description = description
-        self.installed = False
-        self.version = ""
-        self.last_check = None
-        
-    def update_status(self, installed_software):
-        """Update installation status based on installed software list"""
-        for software in installed_software:
-            if self.name.lower() in software['name'].lower():
-                self.installed = True
-                self.version = software.get('version', '')
-                self.last_check = datetime.now()
-                return
-        self.installed = False
-        self.version = ""
-        self.last_check = datetime.now()
-
-class InitializationUI:
-    def __init__(self):
-        self.root = None
-        self.progress_var = None
-        self.status_var = None
-        self.status_label = None
-        self.progress_bar = None
-        self.exit_button = None
-        self.setup_complete = False
-        self.download_thread = None
-
-    def create_window(self):
-        """Create and configure the initialization window"""
-        self.root = tk.Tk()
-        self.root.title("MTech WinTool Setup")
-        self.root.geometry("400x200")
+class WinGetInstaller:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Initializing")
         self.root.resizable(False, False)
+        self.root.attributes('-topmost', True)  # Make window stay on top
         
-        # Center window
+        # Handle icon path for both development and bundled executable
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.abspath(__file__))
+            
+            icon_path = os.path.join(base_path, 'icon.ico')
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Could not load icon: {e}")
+        
+        # Set window size and center it
         window_width = 400
-        window_height = 200
+        window_height = 250
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-        # Configure theme
+        
+        # Apply Sun Valley theme
         sv_ttk.set_theme("dark")
+        self.style = ttk.Style()
         
-        # Create and pack widgets
-        main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        self.status_var = tk.StringVar(value="Initializing...")
-        self.status_label = ttk.Label(main_frame, textvariable=self.status_var)
-        self.status_label.pack(pady=(0, 10))
-
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(
-            main_frame, 
-            variable=self.progress_var,
-            mode='determinate',
-            length=300
+        # Create main frame with padding
+        self.main_frame = ttk.Frame(self.root, padding="15 15 15 15")
+        self.main_frame.grid(row=0, column=0, sticky="nsew")
+        
+        # Configure grid
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+        self.main_frame.grid_columnconfigure(0, weight=1)
+        
+        # Title label with custom font and orange color
+        self.title_label = ttk.Label(
+            self.main_frame,
+            text="MTech WinTool Setup",
+            font=("Segoe UI", 14, "bold"),
+            foreground="#ff6b00"
         )
-        self.progress_bar.pack(pady=(0, 20))
-
-        self.exit_button = ttk.Button(
-            main_frame,
-            text="Exit",
-            command=self.on_exit,
-            state=tk.DISABLED
+        self.title_label.grid(row=0, column=0, pady=(0, 15), sticky="n")
+        
+        # Subtitle with description
+        self.subtitle = ttk.Label(
+            self.main_frame,
+            text="Installing WinGet Package Manager",
+            font=("Segoe UI", 10),
+            wraplength=350
         )
-        self.exit_button.pack()
-
-    def update_status(self, message, progress=None):
-        """Update status message and progress bar"""
-        if self.root and self.status_var:
-            self.status_var.set(message)
-            if progress is not None and self.progress_var:
-                self.progress_var.set(progress)
-            self.root.update()
-
-    def on_exit(self):
-        """Handle exit button click"""
-        if self.root:
-            self.root.quit()
-
-    def download_winget(self):
-        """Download and install winget with progress tracking"""
-        import requests
-        import tempfile
-        import os
+        self.subtitle.grid(row=1, column=0, pady=(0, 5), sticky="n")
         
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        # Status frame
+        self.status_frame = ttk.Frame(self.main_frame)
+        self.status_frame.grid(row=2, column=0, pady=20, sticky="nsew")
+        self.status_frame.grid_columnconfigure(0, weight=1)
         
-        try:
-            url = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
-            print("Downloading winget from GitHub...")
-            self.update_status("Starting Winget download...", 10)
-            
-            # Download with progress tracking
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': '*/*',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive'
-            }
-            response = requests.get(url, stream=True, headers=headers, verify=True)
-            total_size = int(response.headers.get('content-length', 0))
-            
-            # Create temp file
-            temp_file = os.path.join(tempfile.gettempdir(), "Microsoft.DesktopAppInstaller.msixbundle")
-            
-            block_size = 1024 * 1024  # 1 MB chunks
-            downloaded = 0
-            
-            with open(temp_file, 'wb') as f:
-                for data in response.iter_content(block_size):
-                    if data:
-                        downloaded += len(data)
-                        f.write(data)
-                        # Calculate progress percentage and speed
-                        if total_size > 0:
-                            percent = int((downloaded / total_size) * 100)
-                            progress = int(10 + (percent * 0.2))  # Scale to 10-30% range
-                            speed = downloaded / (1024 * 1024)  # MB downloaded
-                            self.update_status(f"Downloading Winget... {percent}% ({speed:.1f} MB)", progress)
-                            print(f"Download progress: {percent}% ({speed:.1f} MB)")
-            
-            print("Download complete, installing...")
-            self.update_status("Installing package...", 40)
-            
-            # Install the package
-            install_cmd = [
-                'powershell', '-Command',
-                f'Add-AppxPackage -Path "{temp_file}"'
-            ]
-            
-            result = subprocess.run(install_cmd,
-                               startupinfo=startupinfo,
-                               capture_output=True,
-                               text=True,
-                               timeout=180)
-            
-            # Clean up temp file
-            try:
-                os.remove(temp_file)
-            except:
-                pass
-            
-            # Verify installation
-            if result.returncode == 0:
-                self.update_status("Verifying installation...", 80)
-                winget_check = subprocess.run(['winget', '--version'],
-                                         capture_output=True,
-                                         text=True,
-                                         startupinfo=startupinfo,
-                                         timeout=10)
-                
-                if winget_check.returncode == 0:
-                    self.update_status("Winget installed successfully!", 100)
-                    print("Winget is now working!")
-                    if self.root:
-                        self.root.quit()
-                    return
-            
-            # If installation failed, try Microsoft Store
-            print("Direct installation failed, trying Microsoft Store...")
-            self.update_status("Opening Microsoft Store...", 50)
-            
-            store_cmd = [
-                'powershell', '-Command',
-                'Start-Process "ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1"'
-            ]
-            
-            subprocess.run(store_cmd, startupinfo=startupinfo, timeout=10)
-            messagebox.showinfo("Install Winget", 
-                            "Please install the 'App Installer' from the Microsoft Store.\n" +
-                            "After installation completes, close and restart the application.")
-            
-        except Exception as e:
-            print(f"Installation failed: {str(e)}")
-            messagebox.showerror("Installation Error",
-                             "Failed to install winget.\n" +
-                             "Please download from: github.com/microsoft/winget-cli/releases")
+        # Status label with icon
+        self.status_label = ttk.Label(
+            self.status_frame,
+            text="🔍 Checking WinGet installation...",
+            font=("Segoe UI", 10),
+            foreground="#ff6b00"
+        )
+        self.status_label.grid(row=0, column=0, pady=(0, 10), sticky="n")
         
-        if self.root:
-            self.root.quit()
-
-    def check_winget(self):
-        """Check if winget is installed and accessible, install or update if needed"""
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        # Progress bar with custom style
+        self.style.configure(
+            "Custom.Horizontal.TProgressbar",
+            troughcolor='#2b2b2b',
+            background='#ff6b00',
+            darkcolor='#ff6b00',
+            lightcolor='#ff6b00'
+        )
+        self.progress = ttk.Progressbar(
+            self.status_frame,
+            mode="indeterminate",
+            style="Custom.Horizontal.TProgressbar",
+            length=250
+        )
+        self.progress.grid(row=1, column=0, pady=(0, 10), sticky="ew")
         
-        # Check if winget works
-        print("Checking if winget works...")
-        try:
-            winget_check = subprocess.run(['winget', '--version'],
-                                     capture_output=True,
-                                     text=True,
-                                     startupinfo=startupinfo,
-                                     timeout=10)
-            
-            if winget_check.returncode == 0:
-                print("Winget is working!")
-                return True
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            print(f"Winget check failed: {str(e)}")
-                
-        # Start download in separate thread
-        print("Winget not found, starting download\nPlease Wait...")
-        self.update_status("Starting winget download...", 40)
-        self.download_thread = threading.Thread(target=self.download_winget)
-        self.download_thread.daemon = True
-        self.download_thread.start()
+        # Info text
+        self.info_text = ttk.Label(
+            self.main_frame,
+            text="This setup will install the Windows Package Manager (WinGet)\nrequired for MTech WinTool to function properly.",
+            font=("Segoe UI", 9),
+            justify="center",
+            wraplength=350
+        )
+        self.info_text.grid(row=3, column=0, pady=(0, 15), sticky="n")
         
-        return False
-
-    def run(self):
-        """Run the initialization process"""
-        try:
-            self.create_window()
-            
-            # Check winget
-            self.update_status("Checking winget installation...", 10)
-            if not self.check_winget():
-                self.update_status("Winget is not installed. \nPlease install Windows Package Manager.", 100)
-                self.exit_button.configure(state=tk.NORMAL)
-                self.root.mainloop()
-                if self.root:  # Check if window still exists
-                    self.root.destroy()
-                    self.root = None
-                return False
-            
-            # Just exit if winget is installed
-            if self.root:
-                self.root.destroy()
-                self.root = None
-            return True
-            
-        except Exception as e:
-            if self.root:
-                self.update_status(f"An unexpected error occurred: {str(e)}", 100)
-                self.exit_button.configure(state=tk.NORMAL)
-                self.root.mainloop()
-                if self.root:  # Check if window still exists
-                    self.root.destroy()
-                    self.root = None
-            return False
-        finally:
-            if self.root:
-                self.root.destroy()
-                self.root = None
-
-class MTechWinTool:
+        # Start checking WinGet
+        self.check_winget()
     
-    # Software categories and packages with descriptions
-    SOFTWARE_CATEGORIES = {
-        "Browsers": {
-            "Google Chrome": {
-                "id": "Google.Chrome",
-                "description": "Fast, secure, and user-friendly web browser from Google"
-            },
-            "Mozilla Firefox": {
-                "id": "Mozilla.Firefox",
-                "description": "Privacy-focused web browser with extensive customization options"
-            },
-            "Opera GX": {
-                "id": "Opera.OperaGX",
-                "description": "Gaming browser with CPU, RAM & network limiters"
-            },
-            "Opera": {
-                "id": "Opera.Opera",
-                "description": "Feature-rich browser with built-in VPN and ad-blocking"
-            },
-            "Brave": {
-                "id": "BraveSoftware.BraveBrowser",
-                "description": "Privacy-first browser with built-in ad blocking and crypto wallet"
-            },
-            "Microsoft Edge": {
-                "id": "Microsoft.Edge",
-                "description": "Modern Chromium-based browser from Microsoft"
-            },
-            "Vivaldi": {
-                "id": "VivaldiTechnologies.Vivaldi",
-                "description": "Highly customizable browser with powerful features"
-            }
-        },
-        "Development": {
-            "Visual Studio Code": {
-                "id": "Microsoft.VisualStudioCode",
-                "description": "Lightweight but powerful source code editor"
-            },
-            "Git": {
-                "id": "Git.Git",
-                "description": "Distributed version control system"
-            },
-            "Python": {
-                "id": "Python.Python.3.12",
-                "description": "Popular programming language for general-purpose development"
-            },
-            "Node.js": {
-                "id": "OpenJS.NodeJS.LTS",
-                "description": "JavaScript runtime built on Chrome's V8 engine"
-            },
-            "JDK": {
-                "id": "Oracle.JDK.21",
-                "description": "Java Development Kit for building Java applications"
-            },
-            "Docker Desktop": {
-                "id": "Docker.DockerDesktop",
-                "description": "Platform for building and sharing containerized applications"
-            },
-            "Postman": {
-                "id": "Postman.Postman",
-                "description": "API platform for building and testing API requests"
-            },
-            "MongoDB Compass": {
-                "id": "MongoDB.Compass.Full",
-                "description": "GUI for MongoDB database management"
-            },
-            "MySQL Workbench": {
-                "id": "Oracle.MySQL.WorkBench",
-                "description": "Visual database design and administration tool for MySQL"
-            },
-            "Android Studio": {
-                "id": "Google.AndroidStudio",
-                "description": "Official IDE for Android app development"
-            },
-            "Visual Studio Community": {
-                "id": "Microsoft.VisualStudio.2022.Community",
-                "description": "Full-featured IDE for .NET development"
-            },
-            "GitHub Desktop": {
-                "id": "GitHub.GitHubDesktop",
-                "description": "GUI for managing Git repositories"
-            },
-            "HeidiSQL": {
-                "id": "HeidiSQL.HeidiSQL",
-                "description": "Lightweight SQL client and admin tool"
-            },
-            "DBeaver": {
-                "id": "dbeaver.dbeaver",
-                "description": "Universal database management tool"
-            }
-        },
-        "Code Editors": {
-            "IntelliJ IDEA Community": {
-                "id": "JetBrains.IntelliJIDEA.Community",
-                "description": "Capable and ergonomic Java IDE"
-            },
-            "PyCharm Community": {
-                "id": "JetBrains.PyCharm.Community",
-                "description": "Python IDE with intelligent code assistance"
-            },
-            "Sublime Text": {
-                "id": "SublimeHQ.SublimeText.4",
-                "description": "Sophisticated text editor for code and markup"
-            },
-            "Atom": {
-                "id": "GitHub.Atom",
-                "description": "Hackable text editor for the 21st Century"
-            },
-            "Notepad++": {
-                "id": "Notepad++.Notepad++",
-                "description": "Feature-rich text and source code editor"
-            },
-            "WebStorm": {
-                "id": "JetBrains.WebStorm",
-                "description": "Professional IDE for JavaScript development"
-            },
-            "Eclipse": {
-                "id": "EclipseAdoptium.Temurin.21.JDK",
-                "description": "Popular IDE supporting multiple programming languages"
-            }
-        },
-        "Utilities": {
-            "7-Zip": {
-                "id": "7zip.7zip",
-                "description": "File archiver with high compression ratio"
-            },
-            "VLC Media Player": {
-                "id": "VideoLAN.VLC",
-                "description": "Versatile media player supporting various formats"
-            },
-            "CPU-Z": {
-                "id": "CPUID.CPU-Z",
-                "description": "System information and CPU monitoring tool"
-            },
-            "GPU-Z": {
-                "id": "TechPowerUp.GPU-Z",
-                "description": "Graphics card information and monitoring utility"
-            },
-            "MSI Afterburner": {
-                "id": "MSI.Afterburner",
-                "description": "Graphics card overclocking and monitoring tool"
-            },
-            "HWiNFO": {
-                "id": "REALiX.HWiNFO",
-                "description": "Comprehensive hardware analysis and monitoring tool"
-            },
-            "PowerToys": {
-                "id": "Microsoft.PowerToys",
-                "description": "Windows power user productivity tools"
-            },
-            "Everything": {
-                "id": "voidtools.Everything",
-                "description": "Ultra-fast file search utility"
-            },
-            "TreeSize Free": {
-                "id": "JAMSoftware.TreeSize.Free",
-                "description": "Disk space management and visualization"
-            },
-            "WinDirStat": {
-                "id": "WinDirStat.WinDirStat",
-                "description": "Disk usage statistics viewer and cleanup tool"
-            },
-            "Process Explorer": {
-                "id": "Microsoft.Sysinternals.ProcessExplorer",
-                "description": "Advanced task manager and system monitor"
-            },
-            "Autoruns": {
-                "id": "Microsoft.Sysinternals.Autoruns",
-                "description": "Windows startup program manager"
-            }
-        },
-        "Media & Design": {
-            "Adobe Reader DC": {
-                "id": "Adobe.Acrobat.Reader.64-bit",
-                "description": "Popular PDF viewer and editor"
-            },
-            "GIMP": {
-                "id": "GIMP.GIMP",
-                "description": "Free and open-source raster graphics editor"
-            },
-            "Blender": {
-                "id": "BlenderFoundation.Blender",
-                "description": "Free and open-source 3D creation software"
-            },
-            "Audacity": {
-                "id": "Audacity.Audacity",
-                "description": "Free and open-source audio editing software"
-            },
-            "OBS Studio": {
-                "id": "OBSProject.OBSStudio",
-                "description": "Free and open-source screen recording and streaming software"
-            },
-            "Paint.NET": {
-                "id": "dotPDN.PaintDotNet",
-                "description": "Free image and photo editing software"
-            },
-            "Inkscape": {
-                "id": "Inkscape.Inkscape",
-                "description": "Free and open-source vector graphics editor"
-            },
-            "Kdenlive": {
-                "id": "KDE.Kdenlive",
-                "description": "Free and open-source video editing software"
-            },
-            "HandBrake": {
-                "id": "HandBrake.HandBrake",
-                "description": "Free and open-source video transcoder"
-            },
-            "ShareX": {
-                "id": "ShareX.ShareX",
-                "description": "Free and open-source screenshot and screen recording software"
-            }
-        },
-        "Communication": {
-            "Microsoft Teams": {
-                "id": "Microsoft.Teams",
-                "description": "Communication and collaboration platform"
-            },
-            "Zoom": {
-                "id": "Zoom.Zoom",
-                "description": "Video conferencing and online meeting platform"
-            },
-            "Slack": {
-                "id": "SlackTechnologies.Slack",
-                "description": "Communication platform for teams"
-            },
-            "Discord": {
-                "id": "Discord.Discord",
-                "description": "Communication platform for communities"
-            },
-            "Skype": {
-                "id": "Microsoft.Skype",
-                "description": "Video conferencing and online meeting platform"
-            },
-            "Telegram": {
-                "id": "Telegram.TelegramDesktop",
-                "description": "Cloud-based messaging platform"
-            },
-            "WhatsApp": {
-                "id": "WhatsApp.WhatsApp",
-                "description": "Cross-platform messaging app"
-            },
-            "Signal": {
-                "id": "OpenWhisperSystems.Signal",
-                "description": "Private messaging app"
-            }
-        },
-        "Security": {
-            "Malwarebytes": {
-                "id": "Malwarebytes.Malwarebytes",
-                "description": "Anti-malware software"
-            },
-            "Wireshark": {
-                "id": "WiresharkFoundation.Wireshark",
-                "description": "Network protocol analyzer"
-            },
-            "Advanced IP Scanner": {
-                "id": "Famatech.AdvancedIPScanner",
-                "description": "Network scanner and manager"
-            },
-            "Bitwarden": {
-                "id": "Bitwarden.Bitwarden",
-                "description": "Password manager"
-            },
-            "CCleaner": {
-                "id": "Piriform.CCleaner",
-                "description": "System cleaning and optimization tool"
-            },
-            "Windows Terminal": {
-                "id": "Microsoft.WindowsTerminal",
-                "description": "Terminal emulator for Windows"
-            },
-            "OpenVPN": {
-                "id": "OpenVPNTechnologies.OpenVPN",
-                "description": "Virtual private network software"
-            },
-            "KeePass": {
-                "id": "DominikReichl.KeePass",
-                "description": "Password manager"
-            },
-            "Glasswire": {
-                "id": "GlassWire.GlassWire",
-                "description": "Network security and monitoring software"
-            },
-            "Cryptomator": {
-                "id": "Cryptomator.Cryptomator",
-                "description": "Cloud storage encryption software"
-            }
-        },
-        "Gaming": {
-            "Steam": {
-                "id": "Valve.Steam",
-                "description": "Digital distribution platform for PC games"
-            },
-            "Epic Games Launcher": {
-                "id": "EpicGames.EpicGamesLauncher",
-                "description": "Digital distribution platform for PC games"
-            },
-            "GOG Galaxy": {
-                "id": "GOG.Galaxy",
-                "description": "Digital distribution platform for PC games"
-            },
-            "Xbox": {
-                "id": "Microsoft.Xbox",
-                "description": "Digital distribution platform for PC games"
-            },
-            "Ubisoft Connect": {
-                "id": "Ubisoft.Connect",
-                "description": "Digital distribution platform for PC games"
-            },
-            "EA App": {
-                "id": "ElectronicArts.EADesktop",
-                "description": "Digital distribution platform for PC games"
-            },
-            "Battle.net": {
-                "id": "Blizzard.BattleNet",
-                "description": "Digital distribution platform for PC games"
-            },
-            "PlayStation": {
-                "id": "PlayStation.PSRemotePlay",
-                "description": "Remote play software for PlayStation consoles"
-            }
-        }
-    }
+    def check_winget(self):
+        """Check if WinGet is installed"""
+        try:
+            subprocess.run(['winget', '--version'], capture_output=True, text=True)
+            self.winget_found()
+        except FileNotFoundError:
+            self.winget_not_found()
+    
+    def winget_found(self):
+        """Called when WinGet is found"""
+        self.progress.stop()
+        self.progress.grid_forget()
+        self.status_label.configure(text="✅ WinGet is installed", foreground="green")
+        # Wait
+        self.root.after(100, self.continue_to_app)
+        
+    def winget_not_found(self):
+        """Called when WinGet is not found"""
+        self.progress.stop()
+        self.progress.grid_forget()
+        self.status_label.configure(text="⚠️ WinGet not found. Installing...", foreground="orange")
+        self.progress.grid(row=1, column=0, pady=(0, 10), sticky="ew")
+        self.progress.start()
+        threading.Thread(target=self.install_winget, daemon=True).start()
+    
+    def install_winget(self):
+        """Install WinGet"""
+        try:
+            # PowerShell script to download and install WinGet
+            ps_script = '''
+            $progressPreference = 'silentlyContinue'
+            $latestWinGet = Invoke-RestMethod https://api.github.com/repos/microsoft/winget-cli/releases/latest
+            $latestWinGetMsixBundleUri = $latestWinGet.assets.browser_download_url | Where-Object { $_.EndsWith(".msixbundle") }
+            
+            # Download WinGet
+            Write-Host "Downloading WinGet..."
+            Invoke-WebRequest -Uri $latestWinGetMsixBundleUri -OutFile "$env:TEMP\Microsoft.DesktopAppInstaller.msixbundle"
+            
+            # Download required dependencies
+            Write-Host "Downloading dependencies..."
+            $vcLibsUri = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
+            $uiLibsUri = "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.7.3/Microsoft.UI.Xaml.2.7.x64.appx"
+            
+            Invoke-WebRequest -Uri $vcLibsUri -OutFile "$env:TEMP\Microsoft.VCLibs.x64.14.00.Desktop.appx"
+            Invoke-WebRequest -Uri $uiLibsUri -OutFile "$env:TEMP\Microsoft.UI.Xaml.2.7.appx"
+            
+            # Install dependencies first
+            Write-Host "Installing dependencies..."
+            Add-AppxPackage -Path "$env:TEMP\Microsoft.VCLibs.x64.14.00.Desktop.appx"
+            Add-AppxPackage -Path "$env:TEMP\Microsoft.UI.Xaml.2.7.appx"
+            
+            # Install WinGet
+            Write-Host "Installing WinGet..."
+            Add-AppxPackage -Path "$env:TEMP\Microsoft.DesktopAppInstaller.msixbundle"
+            Write-Host "Installation complete"
+            '''
+            
+            self.status_label.configure(text="⬇Downloading WinGet and dependencies...")
+            # Save script to temp file and execute
+            script_path = os.path.join(os.environ['TEMP'], 'install_winget.ps1')
+            with open(script_path, 'w') as f:
+                f.write(ps_script)
+            
+            # Run PowerShell with execution policy bypass
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            subprocess.run([
+                'powershell.exe',
+                '-ExecutionPolicy', 'Bypass',
+                '-NoProfile',
+                '-WindowStyle', 'Hidden',
+                '-File', script_path
+            ], capture_output=True, text=True, check=True, startupinfo=startupinfo)
+            
+            # Clean up temp files
+            os.remove(script_path)
+            
+            # Check if installation was successful
+            self.root.after(500, self.check_winget)
+            
+        except subprocess.CalledProcessError as e:
+            self.progress.stop()
+            self.progress.grid_forget()
+            error_msg = e.stderr if e.stderr else str(e)
+            self.status_label.configure(text=f"❌ Installation failed: PowerShell error", foreground="red")
+            print(f"PowerShell Error: {error_msg}")  # For debugging
+            # Try again after 3 seconds
+            self.root.after(3000, self.check_winget)
+        except Exception as e:
+            self.progress.stop()
+            self.progress.grid_forget()
+            self.status_label.configure(text=f"❌ Installation failed: {str(e)}", foreground="red")
+            print(f"Error: {str(e)}")  # For debugging
+            # Try again after 3 seconds
+            self.root.after(3000, self.check_winget)
+    
+    def continue_to_app(self):
+        """Continue to main application"""
+        # Remove all widgets from root
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        
+        # Start main application with same root
+        app = WinTool(self.root)
+        app.run()
+    
+    def run(self):
+        self.root.mainloop()
 
-    def __init__(self):
-        # Initialize settings with default values
-        self.settings = {
-            "auto_refresh": True,           # Auto refresh software status
-            "start_with_windows": False,     # Don't start with Windows by default
-            "show_minimize_message": True   # Show minimize message by default
-        }
+class WinTool:
+    def __init__(self, root=None):
+        if root is None:
+            self.root = tk.Tk()
+        else:
+            self.root = root
+            
+        self.root.title("MTech WinTool")
+        self.root.attributes('-topmost', True)  # Make window stay on top
         
-        # Load settings first
-        self._load_settings()
-        
-        # Initialize software descriptions and status
-        self.software_descriptions = {}
-        self.software_status = {}
-        
-        # Set status file path if auto-refresh is disabled
-        if not self.settings.get("auto_refresh", True):
-            app_data = os.getenv('LOCALAPPDATA')  # Changed from APPDATA to LOCALAPPDATA
-            app_folder = os.path.join(app_data, 'MTechWinTool')
-            os.makedirs(app_folder, exist_ok=True)
-            self.status_file = os.path.join(app_folder, "software_status.json")
-        
-        # Load software descriptions
-        for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-            self.software_descriptions[category] = []
-            for name, description in software_dict.items():
-                self.software_descriptions[category].append(Software(name, description))
-                
-        # Load saved status if auto-refresh is disabled
-        if not self.settings.get("auto_refresh", True):
-            self.load_software_status()
-
-        # Initialize main window and other variables
-        self.root = tk.Tk()
-        self._setup_window()
-        
-        # Set window close protocol
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close_button)
-        
-        # Initialize monitoring variables
-        self.monitoring = True
-        
-        # Initialize WMI
-        self._init_wmi()
-        
-        # Create UI components
-        self._create_title_bar()
-        self._create_main_container()
-        self._create_tabs()
-        
-        # Start monitoring thread
-        self._start_monitoring()
-        
-        # Setup tray icon
-        self._setup_tray()
-        
-    def _setup_window(self):
-        """Setup the main window and UI elements"""
-        # Delete software_status.json if auto-refresh is enabled
-        if self.settings.get("auto_refresh", True) and hasattr(self, 'status_file'):
-            try:
-                if os.path.exists(self.status_file):
-                    os.remove(self.status_file)
-            except Exception as e:
-                print(f"Error deleting software status file: {str(e)}")
+        # Handle icon path for both development and bundled executable
+        try:
+            if getattr(sys, 'frozen', False):
+                base_path = sys._MEIPASS
+            else:
+                base_path = os.path.dirname(os.path.abspath(__file__))
+            
+            icon_path = os.path.join(base_path, 'icon.ico')
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Could not load icon: {e}")
         
         # Set window size and center it
-        window_width = 1024
-        window_height = 768
+        window_width = 1000
+        window_height = 700
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        center_x = int((screen_width - window_width) / 2)
-        center_y = int((screen_height - window_height) / 2)
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
-        self.root.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
         self.root.minsize(800, 600)
         
-        # Remove window decorations
-        self.root.overrideredirect(True)
-        
-        # Set window position
-        self.first_map = True
-        
-        # Apply permanent dark theme
+        # Apply Sun Valley theme
         sv_ttk.set_theme("dark")
-        self._configure_styles()
         
-        # Set up window after a short delay to prevent initial minimize
-        self.root.after(100, self._finish_window_setup)
+        # Initialize components
+        self.pkg_ops = PackageOperations()
+        self.sys_health = SystemHealth(self.update_dashboard_metrics)
+        self.sys_tools = SystemTools()
+        self.unattend_creator = UnattendCreator()
+        self.status_queue = queue.Queue()
         
-        # Bind window events
-        self.root.bind("<Map>", self._on_map)
-        self.root.bind("<Unmap>", self._on_unmap)
+        # Setup UI first
+        self.setup_ui()
+        
+        # Start system health monitoring
+        self.sys_health.start_monitoring()
+        
+        # Start the queue processor
+        self.process_queue()
+        
+        # Load packages asynchronously
+        threading.Thread(target=self.initial_package_load, daemon=True).start()
 
-    def _configure_styles(self):
+    def setup_ui(self):
+        # Create style
         style = ttk.Style()
+        style.configure("Search.TFrame", padding=10)
+        style.configure("Content.TFrame", padding=10)
+        style.configure("Header.TLabel", font=("Segoe UI", 12, "bold"))
+        style.configure("Status.TLabel", font=("Segoe UI", 10))
+        style.configure("Category.Treeview", rowheight=30)
+        style.configure("Action.TButton", padding=5)
+        style.configure("Tool.TButton", padding=10)
+        style.configure("Installed.TLabel", foreground="green")
+        style.configure("NotInstalled.TLabel", foreground="gray")
+        style.configure("NeedsUpdate.TLabel", foreground="orange")
+        style.configure("About.TLabel", font=("Segoe UI", 10))
+        style.configure("AboutTitle.TLabel", font=("Segoe UI", 14, "bold"), foreground='#ff9800')  # Orange color
+        style.configure("Dashboard.TFrame", padding=10)
+        style.configure("DashboardTitle.TLabel", font=("Segoe UI", 16, "bold"), foreground='#ff9800')  # Orange color
+        style.configure("DashboardSubtitle.TLabel", font=("Segoe UI", 12))
+        style.configure("DashboardCard.TFrame", padding=15)
+        style.configure("DashboardMetric.TLabel", font=("Segoe UI", 24, "bold"))
+        style.configure("DashboardText.TLabel", font=("Segoe UI", 10))
+        style.configure("DashboardSubtext.TLabel", font=("Segoe UI", 9))
+        style.configure("DashboardAction.TButton", padding=10)
         
-        # Common button style
-        style.configure("TButton", 
-                       padding=2,
-                       background='#2b2b2b',
-                       borderwidth=0,
-                       relief="flat",
-                       foreground='white',
-                       font=("Segoe UI", 10))
+        # Configure tag colors for treeview
+        self.tree_tags = {
+            'installed': 'green',
+            'not_installed': 'white',
+            'needs_update': 'orange'
+        }
         
-        # Window control buttons
-        style.configure("MinMax.TButton",
-                       padding=2,
-                       background='#2b2b2b',
-                       borderwidth=0,
-                       relief="flat",
-                       foreground='white',
-                       font=("Segoe UI", 10))
+        # Main container
+        main_container = ttk.Frame(self.root)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
-        style.map("MinMax.TButton",
-                 background=[("!active", "#2b2b2b"), ("active", "#404040")],
-                 foreground=[("!active", "white"), ("active", "white")])
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(main_container)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
         
-        # Progress bar
-        style.configure("Custom.Horizontal.TProgressbar",
-                       troughcolor='#2b2b2b',
-                       background='#2b2b2b',
-                       thickness=15)
+        # Create tabs
+        self.setup_dashboard_tab()  # Add dashboard as first tab
+        self.setup_packages_tab()
+        self.setup_monitor_tab()
+        self.setup_tools_tab()
+        self.setup_unattend_tab()
+        self.setup_about_tab()
 
-    def toggle_network_fields(self):
-            state = "disabled" if self.network_type_var.get() == "dhcp" else "normal"
-            for entry in [self.ip_entry, self.subnet_entry, self.gateway_entry, self.dns_entry]:
-                entry.configure(state=state)
-    def _finish_window_setup(self):
-        # Overrideredirect to keep custom window style
-        self.root.overrideredirect(True)
+    def setup_packages_tab(self):
+        packages_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
+        self.notebook.add(packages_tab, text=" 📦 Winget Packages ")
         
-        # Bind minimize event to handle it properly
-        self.root.bind("<Map>", self._on_map)
-        self.root.bind("<Unmap>", self._on_unmap)
-
-    def _create_title_bar(self):
-        title_bar = ttk.Frame(self.root)
-        title_bar.pack(fill="x", pady=0)
+        # Header frame with status
+        header_frame = ttk.Frame(packages_tab)
+        header_frame.pack(fill=tk.X, pady=(10, 20))
         
-        # Title section
-        title_frame = ttk.Frame(title_bar)
-        title_frame.pack(side="left", fill="y", padx=(5, 0))
+        title_label = ttk.Label(header_frame, text="WinGet Package Manager", style="Header.TLabel")
+        title_label.pack(side=tk.LEFT)
         
-        # Title text
-        title_text = ttk.Label(title_frame, 
-                             text="MTech Application", 
-                             font=("Segoe UI", 10))
-        title_text.pack(side="left", padx=(5, 10), pady=3)
+        # Status frame
+        self.status_frame = ttk.Frame(header_frame)
+        self.status_frame.pack(side=tk.RIGHT)
         
-        # Window controls
-        controls_frame = ttk.Frame(title_bar)
-        controls_frame.pack(side="right", fill="y")
+        self.status_label = ttk.Label(self.status_frame, text="Ready", style="Status.TLabel")
+        self.status_label.pack(side=tk.RIGHT)
         
-        ttk.Button(controls_frame, 
-                  text="─", 
-                  width=2,
-                  style="MinMax.TButton",
-                  command=self.minimize_window).pack(side="left", padx=1, pady=1)
+        self.progress_bar = ttk.Progressbar(self.status_frame, mode='indeterminate', length=100)
         
-        ttk.Button(controls_frame, 
-                  text="□", 
-                  width=2,
-                  style="MinMax.TButton",
-                  command=self.toggle_maximize).pack(side="left", padx=1, pady=1)
+        # Search frame with modern styling
+        search_frame = ttk.Frame(packages_tab, style="Search.TFrame")
+        search_frame.pack(fill=tk.X, pady=(0, 10))
         
-        ttk.Button(controls_frame, 
-                  text="×", 
-                  width=2,
-                  style="MinMax.TButton",
-                  command=self._on_close_button).pack(side="left", padx=1, pady=1)
-        
-        # Make window draggable
-        for widget in [title_bar, title_frame, title_text]:
-            widget.bind("<Button-1>", self.start_move)
-            widget.bind("<B1-Motion>", self.do_move)
-
-    def _create_main_container(self):
-        self.container = ttk.Frame(self.root)
-        self.container.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        # Create header
-        header_frame = ttk.Frame(self.container)
-        header_frame.pack(fill="x", pady=(0, 20))
-        
-
-    def _create_tabs(self):
-        self.notebook = ttk.Notebook(self.container)
-        self.notebook.pack(fill="both", expand=True)
-        
-        # Initialize tab frames
-        self.tab_system = ttk.Frame(self.notebook)
-        self.tab_hardware = ttk.Frame(self.notebook)
-        self.tab_tools = ttk.Frame(self.notebook)
-        self.tab_autoinstall = ttk.Frame(self.notebook)
-        self.tab_autounattend = ttk.Frame(self.notebook)
-        self.tab_settings = ttk.Frame(self.notebook)  # New Settings tab
-        self.tab_about = ttk.Frame(self.notebook)
-        
-        # Add tabs to notebook
-        self.notebook.add(self.tab_system, text="System")
-        self.notebook.add(self.tab_hardware, text="Hardware")
-        self.notebook.add(self.tab_tools, text="Tools")
-        self.notebook.add(self.tab_autoinstall, text="Install")
-        self.notebook.add(self.tab_autounattend, text="Unattend")
-        self.notebook.add(self.tab_settings, text="Settings")  # Add Settings tab
-        self.notebook.add(self.tab_about, text="About")
-        
-        # Setup tab contents
-        self.setup_system_and_performance()
-        self.setup_hardware_info()
-        self.setup_tools()
-        self.setup_autoinstall()
-        self.setup_autounattend()
-        self.setup_settings()  # Add setup_settings method call
-        self.setup_about()
-
-    def _start_monitoring(self):
-        self._monitoring_thread = threading.Thread(target=self.update_stats)
-        self._monitoring_thread.daemon = True
-        self._monitoring_thread.start()
-
-    def setup_system_and_performance(self):
-        # Create main frame with padding
-        main_frame = ttk.Frame(self.tab_system, padding=15)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Create two columns with equal width
-        left_frame = ttk.Frame(main_frame)
-        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        
-        right_frame = ttk.Frame(main_frame)
-        right_frame.pack(side="right", fill="both", expand=True, padx=(10, 0))
-        
-        # Left Column - System Information
-        sys_info_frame = ttk.LabelFrame(left_frame, text=" 🖥️ System Information ", padding=15)
-        sys_info_frame.pack(fill="x", pady=(0, 15))
-        
-        # OS Info with icons
-        os_info = platform.uname()
-        
-        # OS Info with better formatting and icons
-        info_items = [
-            ("🪟", "OS", f"{os_info.system} {os_info.release}"),
-            ("📦", "Version", os_info.version),
-            ("💻", "Machine", os_info.machine),
-            ("⚡", "Processor", os_info.processor)
-        ]
-        
-        for icon, label, value in info_items:
-            frame = ttk.Frame(sys_info_frame)
-            frame.pack(fill="x", pady=3)
-            ttk.Label(frame, text=icon, font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-            ttk.Label(frame, text=f"{label}:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-            ttk.Label(frame, text=value, font=("Segoe UI", 9)).pack(side="left", fill="x", expand=True)
-        
-        # Boot Time with icon
-        boot_time = datetime.fromtimestamp(psutil.boot_time())
-        boot_frame = ttk.Frame(sys_info_frame)
-        boot_frame.pack(fill="x", pady=3)
-        ttk.Label(boot_frame, text="⏰", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(boot_frame, text="Boot Time:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-        ttk.Label(boot_frame, text=boot_time.strftime('%Y-%m-%d %H:%M:%S'), 
-                 font=("Segoe UI", 9)).pack(side="left")
-        
-        # Memory Information
-        mem_frame = ttk.LabelFrame(left_frame, text=" 🧠 Memory Information ", padding=15)
-        mem_frame.pack(fill="x", pady=(0, 15))
-        
-        svmem = psutil.virtual_memory()
-        mem_items = [
-            ("📊", "Total", self.format_bytes(svmem.total)),
-            ("✨", "Available", self.format_bytes(svmem.available)),
-            ("📈", "Used", f"{self.format_bytes(svmem.used)} ({svmem.percent}%)")
-        ]
-        
-        for icon, label, value in mem_items:
-            frame = ttk.Frame(mem_frame)
-            frame.pack(fill="x", pady=3)
-            ttk.Label(frame, text=icon, font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-            ttk.Label(frame, text=f"{label}:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-            ttk.Label(frame, text=value, font=("Segoe UI", 9)).pack(side="left")
-        
-        # Disk Information
-        disk_frame = ttk.LabelFrame(left_frame, text=" 💾 Disk Information ", padding=15)
-        disk_frame.pack(fill="x")
-        
-        partitions = psutil.disk_partitions()
-        for partition in partitions:
-            if os.name == 'nt' and ('cdrom' in partition.opts or partition.fstype == ''):
-                continue
-            try:
-                usage = psutil.disk_usage(partition.mountpoint)
-                
-                # Drive header
-                drive_frame = ttk.Frame(disk_frame)
-                drive_frame.pack(fill="x", pady=(5, 3))
-                ttk.Label(drive_frame, text="💿", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-                ttk.Label(drive_frame, text=f"Drive {partition.device}", 
-                         font=("Segoe UI", 9, "bold")).pack(side="left")
-                
-                # Drive details with consistent layout
-                details_frame = ttk.Frame(disk_frame)
-                details_frame.pack(fill="x", padx=15, pady=(0, 5))
-                
-                drive_items = [
-                    ("📦", "Total", self.format_bytes(usage.total)),
-                    ("📊", "Used", f"{self.format_bytes(usage.used)} ({usage.percent}%)"),
-                    ("✨", "Free", self.format_bytes(usage.free))
-                ]
-                
-                for icon, label, value in drive_items:
-                    item_frame = ttk.Frame(details_frame)
-                    item_frame.pack(fill="x", pady=2)
-                    ttk.Label(item_frame, text=icon, font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-                    ttk.Label(item_frame, text=f"{label}:", font=("Segoe UI", 9)).pack(side="left", padx=(0, 10))
-                    ttk.Label(item_frame, text=value, font=("Segoe UI", 9)).pack(side="left")
-            except Exception:
-                continue
-        
-        # Right Column - Performance Monitoring
-        perf_frame = ttk.LabelFrame(right_frame, text=" 📊 Performance Monitoring ", padding=15)
-        perf_frame.pack(fill="both", expand=True)
-        
-        # CPU Usage with custom styling
-        cpu_frame = ttk.Frame(perf_frame)
-        cpu_frame.pack(fill="x", pady=(0, 15))
-        
-        ttk.Label(cpu_frame, text="⚡", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(cpu_frame, text="CPU Usage:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-        self.cpu_label = ttk.Label(cpu_frame, text="0%", font=("Segoe UI", 9))
-        self.cpu_label.pack(side="left", padx=(0, 10))
-        self.cpu_progress = ttk.Progressbar(cpu_frame, length=200, mode='determinate', 
-                                          style="Custom.Horizontal.TProgressbar")
-        self.cpu_progress.pack(side="left", fill="x", expand=True)
-        
-        # CPU Temperature
-        cpu_temp_frame = ttk.Frame(perf_frame)
-        cpu_temp_frame.pack(fill="x", pady=(0, 15))
-        
-        ttk.Label(cpu_temp_frame, text="🌡️", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(cpu_temp_frame, text="CPU Temp:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-        self.cpu_temp_label = ttk.Label(cpu_temp_frame, text="N/A", font=("Segoe UI", 9))
-        self.cpu_temp_label.pack(side="left", padx=(0, 10))
-        self.cpu_temp_progress = ttk.Progressbar(cpu_temp_frame, length=200, mode='determinate',
-                                               style="Custom.Horizontal.TProgressbar")
-        self.cpu_temp_progress.pack(side="left", fill="x", expand=True)
-        
-        # Memory Usage
-        mem_usage_frame = ttk.Frame(perf_frame)
-        mem_usage_frame.pack(fill="x", pady=(0, 15))
-        
-        ttk.Label(mem_usage_frame, text="🧠", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(mem_usage_frame, text="Memory:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-        self.memory_label = ttk.Label(mem_usage_frame, text="0%", font=("Segoe UI", 9))
-        self.memory_label.pack(side="left", padx=(0, 10))
-        self.memory_progress = ttk.Progressbar(mem_usage_frame, length=200, mode='determinate',
-                                             style="Custom.Horizontal.TProgressbar")
-        self.memory_progress.pack(side="left", fill="x", expand=True)
-        
-        # Disk Usage
-        disk_usage_frame = ttk.Frame(perf_frame)
-        disk_usage_frame.pack(fill="x", pady=(0, 15))
-        
-        ttk.Label(disk_usage_frame, text="💾", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(disk_usage_frame, text="Disk:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-        self.disk_label = ttk.Label(disk_usage_frame, text="0%", font=("Segoe UI", 9))
-        self.disk_label.pack(side="left", padx=(0, 10))
-        self.disk_progress = ttk.Progressbar(disk_usage_frame, length=200, mode='determinate',
-                                           style="Custom.Horizontal.TProgressbar")
-        self.disk_progress.pack(side="left", fill="x", expand=True)
-        
-        # Network Usage
-        net_frame = ttk.LabelFrame(right_frame, text=" 🌐 Network Usage ", padding=15)
-        net_frame.pack(fill="x", pady=(15, 0))
-        
-        self.net_labels = {}
-        net_io = psutil.net_io_counters(pernic=True)
-        for nic, stats in net_io.items():
-            if nic != 'lo' and not nic.startswith('veth'):
-                # Network interface header
-                nic_frame = ttk.Frame(net_frame)
-                nic_frame.pack(fill="x", pady=(5, 3))
-                ttk.Label(nic_frame, text="🔌", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-                ttk.Label(nic_frame, text=f"{nic}:", 
-                         font=("Segoe UI", 9, "bold")).pack(side="left")
-                
-                # Network stats with consistent layout
-                stats_frame = ttk.Frame(net_frame)
-                stats_frame.pack(fill="x", padx=15, pady=(0, 5))
-                
-                sent_frame = ttk.Frame(stats_frame)
-                sent_frame.pack(fill="x", pady=2)
-                ttk.Label(sent_frame, text="⬆️", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-                ttk.Label(sent_frame, text="Sent:", font=("Segoe UI", 9)).pack(side="left", padx=(0, 10))
-                sent_label = ttk.Label(sent_frame, text=self.format_bytes(stats.bytes_sent),
-                                     font=("Segoe UI", 9))
-                sent_label.pack(side="left")
-                
-                recv_frame = ttk.Frame(stats_frame)
-                recv_frame.pack(fill="x", pady=2)
-                ttk.Label(recv_frame, text="⬇️", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-                ttk.Label(recv_frame, text="Received:", font=("Segoe UI", 9)).pack(side="left", padx=(0, 10))
-                recv_label = ttk.Label(recv_frame, text=self.format_bytes(stats.bytes_recv),
-                                     font=("Segoe UI", 9))
-                recv_label.pack(side="left")
-                
-                self.net_labels[nic] = (sent_label, recv_label)
-    
-    def setup_hardware_info(self):
-        main_frame = ttk.Frame(self.tab_hardware, padding=20)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Left column - CPU Information
-        left_frame = ttk.Frame(main_frame)
-        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        
-        # CPU Information
-        cpu_frame = ttk.LabelFrame(left_frame, text=" 🖥️ CPU Information ", padding=20)
-        cpu_frame.pack(fill="x", pady=(0, 10))
-        
-        # Basic CPU Info
-        basic_info = [
-            ("💻", "Total Cores", psutil.cpu_count()),
-            ("📈", "Physical Cores", psutil.cpu_count(logical=False)),
-            ("⚡", "Base Frequency", f"{psutil.cpu_freq().current:.2f} MHz"),
-            ("🔋", "Max Frequency", f"{psutil.cpu_freq().max:.2f} MHz")
-        ]
-        
-        for icon, label, value in basic_info:
-            info_frame = ttk.Frame(cpu_frame)
-            info_frame.pack(fill="x", pady=5)
-            ttk.Label(info_frame, text=icon, font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
-            ttk.Label(info_frame, text=label + ":", font=("Segoe UI", 10, "bold")).pack(side="left")
-            ttk.Label(info_frame, text=str(value)).pack(side="right")
-        
-        # CPU Usage with progress bar
-        usage_frame = ttk.Frame(cpu_frame)
-        usage_frame.pack(fill="x", pady=10)
-        ttk.Label(usage_frame, text="⚡", font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
-        ttk.Label(usage_frame, text="CPU Usage:", font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.cpu_usage_label = ttk.Label(usage_frame, text="0%")
-        self.cpu_usage_label.pack(side="right")
-        self.cpu_usage_progress = ttk.Progressbar(cpu_frame, mode='determinate')
-        self.cpu_usage_progress.pack(fill="x", pady=(0, 10))
-        
-        # CPU Temperature (if available)
-        temp_frame = ttk.Frame(cpu_frame)
-        temp_frame.pack(fill="x", pady=5)
-        ttk.Label(temp_frame, text="🌡️", font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
-        ttk.Label(temp_frame, text="CPU Temperature:", font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.cpu_temp_label = ttk.Label(temp_frame, text="N/A")
-        self.cpu_temp_label.pack(side="right")
-        self.cpu_temp_progress = ttk.Progressbar(cpu_frame, mode='determinate', maximum=100)
-        self.cpu_temp_progress.pack(fill="x", pady=(0, 10))
-        
-        # Memory Information
-        memory_frame = ttk.LabelFrame(left_frame, text=" 🧠 Memory Information ", padding=20)
-        memory_frame.pack(fill="x")
-        
-        # Memory Usage with progress bar
-        usage_frame = ttk.Frame(memory_frame)
-        usage_frame.pack(fill="x", pady=10)
-        ttk.Label(usage_frame, text="📊", font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
-        ttk.Label(usage_frame, text="Memory Usage:", font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.memory_usage_label = ttk.Label(usage_frame, text="0%")
-        self.memory_usage_label.pack(side="right")
-        self.memory_usage_progress = ttk.Progressbar(memory_frame, mode='determinate')
-        self.memory_usage_progress.pack(fill="x", pady=(0, 10))
-        
-        # Detailed Memory Info
-        memory = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-        
-        memory_info = [
-            ("📦", "Total Memory", self.format_bytes(memory.total)),
-            ("✨", "Available Memory", self.format_bytes(memory.available)),
-            ("📈", "Used Memory", self.format_bytes(memory.used)),
-            ("💻", "Free Memory", self.format_bytes(memory.free)),
-            ("📊", "Swap Total", self.format_bytes(swap.total)),
-            ("📈", "Swap Used", self.format_bytes(swap.used)),
-            ("✨", "Swap Free", self.format_bytes(swap.free))
-        ]
-        
-        for icon, label, value in memory_info:
-            info_frame = ttk.Frame(memory_frame)
-            info_frame.pack(fill="x", pady=5)
-            ttk.Label(info_frame, text=icon, font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
-            ttk.Label(info_frame, text=label + ":", font=("Segoe UI", 10, "bold")).pack(side="left")
-            ttk.Label(info_frame, text=value).pack(side="right")
-    
-    def setup_tools(self):
-        main_frame = ttk.Frame(self.tab_tools, padding=20)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Tools grid
-        tools = [
-            ("Task Manager", "taskmgr", "Manage running applications and system resources"),
-            ("Control Panel", "control", "Configure system settings"),
-            ("System Properties", "sysdm.cpl", "View and modify system properties"),
-            ("Disk Cleanup", "cleanmgr", "Clean up unnecessary files"),
-            ("Empty Recycle Bin", self.empty_recycle_bin, "Empty the Recycle Bin")
-        ]
-        
-        for i, (name, command, description) in enumerate(tools):
-            tool_frame = ttk.LabelFrame(main_frame, text=f" 🛠️ {name} ", padding=15)
-            tool_frame.grid(row=i//2, column=i%2, padx=10, pady=10, sticky="nsew")
-            
-            ttk.Label(tool_frame, text=description, wraplength=250).pack(pady=(0, 10))
-            
-            if callable(command):
-                btn = ttk.Button(tool_frame, text="Launch", command=command, style="TButton")
-            else:
-                btn = ttk.Button(tool_frame, text="Launch", 
-                               command=lambda cmd=command: os.system(cmd), 
-                               style="TButton")
-            btn.pack()
-        
-        # Configure grid weights
-        main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_columnconfigure(1, weight=1)
-    
-    def setup_autoinstall(self):
-        main_frame = ttk.Frame(self.tab_autoinstall, padding=20)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Left side - Categories and Search
-        left_frame = ttk.Frame(main_frame)
-        left_frame.pack(side="left", fill="y", padx=(0, 10))
-        
-        # Search frame
-        search_frame = ttk.LabelFrame(left_frame, text=" 🔍 Search ", padding=10)
-        search_frame.pack(fill="x", pady=(0, 10))
+        search_label = ttk.Label(search_frame, text="🔍", font=("Segoe UI", 12))
+        search_label.pack(side=tk.LEFT, padx=(0, 5))
         
         self.search_var = tk.StringVar()
-        self.search_var.trace('w', lambda *args: self.filter_software())
-        search_entry = ttk.Entry(search_frame, textvariable=self.search_var)
-        search_entry.pack(fill="x")
+        self.search_var.trace('w', self.filter_packages)
+        search_entry = ttk.Entry(search_frame, textvariable=self.search_var, font=("Segoe UI", 10))
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Categories frame
-        categories_frame = ttk.LabelFrame(left_frame, text=" 📁 Categories ", padding=10)
-        categories_frame.pack(fill="both", expand=True)
+        # Add category filter dropdown
+        category_frame = ttk.Frame(search_frame)
+        category_frame.pack(side=tk.RIGHT, padx=(10, 0))
         
-        self.category_vars = {}
-        for category in self.SOFTWARE_CATEGORIES.keys():
-            var = tk.BooleanVar(value=True)
-            self.category_vars[category] = var
-            ttk.Checkbutton(categories_frame, text=category, variable=var,
-                          command=self.filter_software).pack(fill="x", pady=2)
+        ttk.Label(category_frame, text="Category:").pack(side=tk.LEFT, padx=(0, ))
+        self.category_var = tk.StringVar(value="All")
+        self.category_dropdown = ttk.Combobox(category_frame, textvariable=self.category_var, state="readonly", width=15)
+        self.category_dropdown.pack(side=tk.LEFT)
+        self.category_dropdown.bind('<<ComboboxSelected>>', self.filter_packages)
         
-        # Right side - Software list and details
-        right_frame = ttk.Frame(main_frame)
-        right_frame.pack(side="right", fill="both", expand=True)
+        # Stats frame
+        stats_frame = ttk.Frame(packages_tab)
+        stats_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Header frame
-        header_frame = ttk.Frame(right_frame)
-        header_frame.pack(fill="x", pady=(0, 10))
+        self.stats_label = ttk.Label(stats_frame, text="", style="Header.TLabel")
+        self.stats_label.pack(side=tk.LEFT)
         
-        ttk.Label(header_frame, text=" 📦 Software Installation ", 
-                 font=("Segoe UI", 12, "bold")).pack(side="left")
+        # Package list with improved styling
+        list_frame = ttk.Frame(packages_tab, style="Content.TFrame")
+        list_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Status frame with progress bar
-        status_frame = ttk.Frame(right_frame)
-        status_frame.pack(fill="x", pady=(0, 10))
+        # Create Treeview with columns
+        self.tree = ttk.Treeview(list_frame, show='tree headings', style="Category.Treeview")
+        self.tree['columns'] = ('status', 'description')
+        self.tree.heading('status', text='Status')
+        self.tree.heading('description', text='Description')
+        self.tree.column('status', width=100)
+        self.tree.column('description', width=300)
         
-        self.status_label = ttk.Label(status_frame, text="")
-        self.status_label.pack(fill='x', pady=(0, 5))
-        
-        self.progress_bar = ttk.Progressbar(status_frame, mode='indeterminate', length=350)
-        self.progress_bar.pack(fill='x', pady=(0, 10))
-        
-        # Buttons frame
-        buttons_frame = ttk.Frame(header_frame)
-        buttons_frame.pack(side="right")
-        
-        # Install button
-        install_btn = ttk.Button(buttons_frame, text="Install Selected", 
-                               command=self.install_selected_software,
-                               style="TButton")
-        install_btn.pack(side="right", padx=5)
-        
-        # Refresh button
-        refresh_btn = ttk.Button(buttons_frame, text="Check Status", 
-                               command=self.refresh_software_status)
-        refresh_btn.pack(side="right", padx=5)
-        
-        # Create Treeview with style
-        style = ttk.Style()
-        style.configure("Treeview", rowheight=25)
-        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
-        
-        # Create the treeview
-        self.software_tree = ttk.Treeview(right_frame, show="tree headings", style="Treeview")
-        self.software_tree["columns"] = ("Software", "Description")
-        
-        # Configure columns
-        self.software_tree.column("#0", width=30)  # Tree column (arrow)
-        self.software_tree.column("Software", width=150)
-        self.software_tree.column("Description", width=300)
-        
-        # Configure column headings
-        self.software_tree.heading("Software", text="Software")
-        self.software_tree.heading("Description", text="Description")
-        
-        # Add scrollbar
-        scrollbar = ttk.Scrollbar(right_frame, orient="vertical", command=self.software_tree.yview)
-        self.software_tree.configure(yscrollcommand=scrollbar.set)
-        
-        # Pack everything
-        self.software_tree.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Store category nodes and software items
-        self.category_nodes = {}
-        self.software_items = {}
-        
-        # Populate software list
-        for category in self.SOFTWARE_CATEGORIES:
-            category_node = self.software_tree.insert("", "end", text=category)
-            self.category_nodes[category] = category_node
+        # Configure tag colors
+        for tag, color in self.tree_tags.items():
+            self.tree.tag_configure(tag, foreground=color)
             
-            software_dict = self.SOFTWARE_CATEGORIES[category]
-            for software_name in software_dict:
-                item = self.software_tree.insert(category_node, "end", 
-                                              values=(software_name, software_dict[software_name]['description']))
-                self.software_items[software_name] = item
-            
-            # Expand the category node
-            self.software_tree.item(category_node, open=True)
+        # Add scrollbars
+        y_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        x_scrollbar = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
         
-        # Configure tag for installed items
-        self.software_tree.tag_configure('installed', foreground='green')
+        # Grid layout for better organization
+        self.tree.grid(row=0, column=0, sticky='nsew')
+        y_scrollbar.grid(row=0, column=1, sticky='ns')
+        x_scrollbar.grid(row=1, column=0, sticky='ew')
         
-        # Bind double-click to toggle category expansion
-        self.software_tree.bind("<Double-1>", self.toggle_category)
+        list_frame.grid_columnconfigure(0, weight=1)
+        list_frame.grid_rowconfigure(0, weight=1)
         
-        # Add right-click menu
-        self.context_menu = tk.Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="Uninstall", command=self.uninstall_selected_software)
+        # Action buttons frame with modern styling
+        button_frame = ttk.Frame(packages_tab)
+        button_frame.pack(fill=tk.X, pady=(20, 0))
         
-        # Bind right-click to show context menu
-        self.software_tree.bind("<Button-3>", self.show_context_menu)
+        # Left-side buttons
+        left_buttons = ttk.Frame(button_frame)
+        left_buttons.pack(side=tk.LEFT)
         
-        # Auto-check status if no status file exists
-        self.status_label.config(text="Starting software status check...")
-        self.progress_bar.start(10)
-        self.root.after(500, self.refresh_software_status)
-    
-    def setup_autounattend(self):
-        # Create main container frame
-        container = ttk.Frame(self.tab_autounattend)
-        container.pack(fill="both", expand=True)
+        install_btn = ttk.Button(left_buttons, text="📦 Install", command=self.install_package, style="Action.TButton", width=15)
+        install_btn.pack(side=tk.LEFT, padx=5)
+        
+        uninstall_btn = ttk.Button(left_buttons, text="❌ Uninstall", command=self.uninstall_package, style="Action.TButton", width=15)
+        uninstall_btn.pack(side=tk.LEFT, padx=5)
+        
+        update_btn = ttk.Button(left_buttons, text="🔄 Update", command=self.update_package, style="Action.TButton", width=15)
+        update_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Right-side buttons
+        right_buttons = ttk.Frame(button_frame)
+        right_buttons.pack(side=tk.RIGHT)
+        
+        refresh_btn = ttk.Button(right_buttons, text="🔄 Refresh", command=self.refresh_packages, style="Action.TButton", width=15)
+        refresh_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Bind events
+        self.tree.bind('<<TreeviewOpen>>', self.on_category_open)
+        self.tree.bind('<<TreeviewClose>>', self.on_category_close)
+        self.tree.bind('<Double-1>', self.on_item_double_click)
 
-        # Create scrollable frame for content
-        content_frame = ttk.Frame(container)
-        content_frame.pack(fill="both", expand=True, padx=20, pady=20)
+    def setup_monitor_tab(self):
+        monitor_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
+        self.notebook.add(monitor_tab, text=" 📊 System Monitor ")
 
-        # Create a canvas with scrollbar for the content
-        canvas = tk.Canvas(content_frame)
-        scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=canvas.yview)
+        # Resource Usage Frame
+        resource_frame = ttk.LabelFrame(monitor_tab, text="💻 Resource Usage", padding="15")
+        resource_frame.pack(fill=tk.X, pady=(0, 15))
+
+        # CPU Frame
+        cpu_frame = ttk.LabelFrame(resource_frame, text="🔲 CPU", padding="10")
+        cpu_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Create the main frame inside canvas
-        main_frame = ttk.Frame(canvas)
-        main_frame.bind(
+        # CPU Usage
+        cpu_usage_frame = ttk.Frame(cpu_frame)
+        cpu_usage_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(cpu_usage_frame, text="⚡ Usage:", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        self.cpu_progress = ttk.Progressbar(cpu_usage_frame, mode='determinate', length=200)
+        self.cpu_progress.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.cpu_label = ttk.Label(cpu_usage_frame, text="0%", width=8)
+        self.cpu_label.pack(side=tk.LEFT, padx=5)
+
+        # CPU Details
+        cpu_details_frame = ttk.Frame(cpu_frame)
+        cpu_details_frame.pack(fill=tk.X)
+        self.cpu_details_label = ttk.Label(cpu_details_frame, text="🔄 Cores: -- | ⚡ Frequency: -- GHz")
+        self.cpu_details_label.pack(side=tk.LEFT, padx=5)
+        
+        # Memory Frame
+        memory_frame = ttk.LabelFrame(resource_frame, text="🧠 Memory", padding="10")
+        memory_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Memory Usage
+        memory_usage_frame = ttk.Frame(memory_frame)
+        memory_usage_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(memory_usage_frame, text="📊 Usage:", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        self.memory_progress = ttk.Progressbar(memory_usage_frame, mode='determinate', length=200)
+        self.memory_progress.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.memory_label = ttk.Label(memory_usage_frame, text="0%", width=8)
+        self.memory_label.pack(side=tk.LEFT, padx=5)
+
+        # Memory Details
+        memory_details_frame = ttk.Frame(memory_frame)
+        memory_details_frame.pack(fill=tk.X)
+        self.memory_details_label = ttk.Label(memory_details_frame, text="💾 Total: -- GB | 📈 Used: -- GB | 📉 Available: -- GB")
+        self.memory_details_label.pack(side=tk.LEFT, padx=5)
+        
+        # Disk Frame
+        disk_frame = ttk.LabelFrame(resource_frame, text="💿 Disk", padding="10")
+        disk_frame.pack(fill=tk.X)
+        
+        # Disk Activity
+        disk_usage_frame = ttk.Frame(disk_frame)
+        disk_usage_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(disk_usage_frame, text="📊 Activity:", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        self.disk_progress = ttk.Progressbar(disk_usage_frame, mode='determinate', length=200)
+        self.disk_progress.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.disk_label = ttk.Label(disk_usage_frame, text="0%", width=8)
+        self.disk_label.pack(side=tk.LEFT, padx=5)
+
+        # Disk Details
+        disk_details_frame = ttk.Frame(disk_frame)
+        disk_details_frame.pack(fill=tk.X)
+        self.disk_details_label = ttk.Label(disk_details_frame, text="💽 Total: -- GB | 📈 Used: -- GB | 📉 Free: -- GB")
+        self.disk_details_label.pack(side=tk.LEFT, padx=5)
+
+        # System Info Frame
+        system_frame = ttk.LabelFrame(monitor_tab, text="ℹ️ System Information", padding="15")
+        system_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create a canvas with scrollbar for system info
+        canvas = tk.Canvas(system_frame)
+        scrollbar = ttk.Scrollbar(system_frame, orient="vertical", command=canvas.yview)
+        self.system_info_frame = ttk.Frame(canvas)
+
+        self.system_info_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        
-        # Create window in canvas
-        canvas.create_window((0, 0), window=main_frame, anchor="nw")
+
+        canvas.create_window((0, 0), window=self.system_info_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Create two columns
-        left_column = ttk.Frame(main_frame)
-        left_column.pack(side="left", fill="both", expand=True, padx=(0, 5))
-        
-        right_column = ttk.Frame(main_frame)
-        right_column.pack(side="right", fill="both", expand=True, padx=(5, 0))
-
-        # Bottom frame for Generate XML button
-        bottom_frame = ttk.Frame(container)
-        bottom_frame.pack(fill="x", side="bottom", pady=10, padx=10)
-
-        # Theme toggle
-        theme_frame = ttk.Frame(bottom_frame)
-        theme_frame.pack(side="left")
-        self.theme_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(theme_frame, text="Dark Theme", variable=self.theme_var, 
-                       command=self.toggle_theme).pack(side="left")
-
-        # Generate XML button
-        generate_btn = ttk.Button(bottom_frame, text="Generate XML", 
-                                command=self.generate_unattend_xml, 
-                                style="TButton",
-                                width=20)
-        generate_btn.pack(side="right")
-
-        # Configure style for accent button
-        style = ttk.Style()
-        style.configure("TButton", font=("Segoe UI", 10, "bold"))
-        
-        # Windows Settings (Left Column)
-        windows_frame = ttk.LabelFrame(left_column, text=" 🖥️ Windows Settings ", padding=10)
-        windows_frame.pack(fill="x", pady=(0, 10))
-        
-        # Windows Edition
-        edition_frame = ttk.Frame(windows_frame)
-        edition_frame.pack(fill="x", pady=5)
-        ttk.Label(edition_frame, text="📦", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(edition_frame, text="Windows Edition:").pack(side="left")
-        self.edition_var = tk.StringVar(value="Windows 10 Pro")
-        editions = ["Windows 10 Home", "Windows 10 Pro", "Windows 10 Enterprise", 
-                   "Windows 11 Home", "Windows 11 Pro", "Windows 11 Enterprise"]
-        edition_combo = ttk.Combobox(edition_frame, textvariable=self.edition_var, values=editions)
-        edition_combo.pack(side="right", fill="x", expand=True, padx=(10, 0))
-        
-        # Product Key
-        key_frame = ttk.Frame(windows_frame)
-        key_frame.pack(fill="x", pady=5)
-        ttk.Label(key_frame, text="🔑", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(key_frame, text="Product Key:").pack(side="left")
-        self.key_var = tk.StringVar()
-        ttk.Entry(key_frame, textvariable=self.key_var).pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        # User Settings
-        user_frame = ttk.LabelFrame(left_column, text=" 👥 User Account ", padding=10)
-        user_frame.pack(fill="x", pady=(0, 10))
-        
-        # Username
-        username_frame = ttk.Frame(user_frame)
-        username_frame.pack(fill="x", pady=5)
-        ttk.Label(username_frame, text="👋", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(username_frame, text="Username:").pack(side="left")
-        self.username_var = tk.StringVar(value="User")
-        ttk.Entry(username_frame, textvariable=self.username_var).pack(side="right", fill="x", expand=True, padx=(10, 0))
-        
-        # Password
-        password_frame = ttk.Frame(user_frame)
-        password_frame.pack(fill="x", pady=5)
-        ttk.Label(password_frame, text="🔒", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(password_frame, text="Password:").pack(side="left")
-        self.password_var = tk.StringVar()
-        ttk.Entry(password_frame, textvariable=self.password_var, show="*").pack(side="right", fill="x", expand=True, padx=(10, 0))
-        
-        # Organization
-        org_frame = ttk.Frame(user_frame)
-        org_frame.pack(fill="x", pady=5)
-        ttk.Label(org_frame, text="🏢", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(org_frame, text="Organization:").pack(side="left")
-        self.org_var = tk.StringVar()
-        ttk.Entry(org_frame, textvariable=self.org_var).pack(side="right", fill="x", expand=True, padx=(10, 0))
-        
-        # Computer name
-        computer_frame = ttk.Frame(user_frame)
-        computer_frame.pack(fill="x", pady=5)
-        ttk.Label(computer_frame, text="🖥️", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(computer_frame, text="Computer Name:").pack(side="left")
-        self.computer_var = tk.StringVar(value="DESKTOP-PC")
-        ttk.Entry(computer_frame, textvariable=self.computer_var).pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        # Windows Update Settings
-        update_frame = ttk.LabelFrame(user_frame, text=" 📈 Windows Update ", padding=10)
-        update_frame.pack(fill="x", pady=(10, 5))
-
-        self.update_behavior_var = tk.StringVar(value="download")
-        ttk.Radiobutton(update_frame, text="Download and Install Updates", value="download", 
-                       variable=self.update_behavior_var).pack(fill="x", pady=2)
-        ttk.Radiobutton(update_frame, text="Only Download Updates", value="downloadonly", 
-                       variable=self.update_behavior_var).pack(fill="x", pady=2)
-        ttk.Radiobutton(update_frame, text="Disable Windows Update", value="disable", 
-                       variable=self.update_behavior_var).pack(fill="x", pady=2)
-
-        # Power Settings
-        power_frame = ttk.LabelFrame(user_frame, text=" ⚡ Power Settings ", padding=10)
-        power_frame.pack(fill="x", pady=(5, 10))
-
-        # Power Plan
-        self.power_plan_var = tk.StringVar(value="balanced")
-        ttk.Radiobutton(power_frame, text="Balanced", value="balanced", 
-                       variable=self.power_plan_var).pack(fill="x", pady=2)
-        ttk.Radiobutton(power_frame, text="High Performance", value="performance", 
-                       variable=self.power_plan_var).pack(fill="x", pady=2)
-        ttk.Radiobutton(power_frame, text="Power Saver", value="powersaver", 
-                       variable=self.power_plan_var).pack(fill="x", pady=2)
-
-        # Regional Settings (Right Column)
-        lang_frame = ttk.LabelFrame(right_column, text=" 🌎 Regional Settings ", padding=10)
-        lang_frame.pack(fill="x", pady=(0, 10))
-        
-        # System Language
-        lang_select_frame = ttk.Frame(lang_frame)
-        lang_select_frame.pack(fill="x", pady=5)
-        ttk.Label(lang_select_frame, text="🌐", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(lang_select_frame, text="System Language:").pack(side="left")
-        self.system_lang_var = tk.StringVar(value="en-US")
-        ttk.Entry(lang_select_frame, textvariable=self.system_lang_var).pack(side="right", fill="x", expand=True, padx=(10, 0))
-        
-        # Keyboard Layout
-        keyboard_frame = ttk.Frame(lang_frame)
-        keyboard_frame.pack(fill="x", pady=5)
-        ttk.Label(keyboard_frame, text="🖥️", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(keyboard_frame, text="Keyboard Layout:").pack(side="left")
-        self.keyboard_var = tk.StringVar(value="en-US")
-        ttk.Entry(keyboard_frame, textvariable=self.keyboard_var).pack(side="right", fill="x", expand=True, padx=(10, 0))
-        
-        # Time Zone
-        timezone_frame = ttk.Frame(lang_frame)
-        timezone_frame.pack(fill="x", pady=5)
-        ttk.Label(timezone_frame, text="🕰️", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(timezone_frame, text="Time Zone:").pack(side="left")
-        self.timezone_var = tk.StringVar(value="UTC")
-        ttk.Entry(timezone_frame, textvariable=self.timezone_var).pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        # Network Settings
-        network_frame = ttk.LabelFrame(right_column, text=" 🌐 Network Configuration ", padding=10)
-        network_frame.pack(fill="x", pady=(0, 10))
-
-        # Network Type
-        self.network_type_var = tk.StringVar(value="dhcp")
-        ttk.Radiobutton(network_frame, text="DHCP (Automatic IP)", value="dhcp", 
-                       variable=self.network_type_var, command=self.toggle_network_fields).pack(fill="x", pady=2)
-        ttk.Radiobutton(network_frame, text="Static IP", value="static", 
-                       variable=self.network_type_var, command=self.toggle_network_fields).pack(fill="x", pady=2)
-
-        # IP Address
-        ip_frame = ttk.Frame(network_frame)
-        ip_frame.pack(fill="x", pady=5)
-        ttk.Label(ip_frame, text="📍", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(ip_frame, text="IP Address:").pack(side="left")
-        self.ip_var = tk.StringVar()
-        self.ip_entry = ttk.Entry(ip_frame, textvariable=self.ip_var)
-        self.ip_entry.pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        # Subnet Mask
-        subnet_frame = ttk.Frame(network_frame)
-        subnet_frame.pack(fill="x", pady=5)
-        ttk.Label(subnet_frame, text="🔗", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(subnet_frame, text="Subnet Mask:").pack(side="left")
-        self.subnet_var = tk.StringVar()
-        self.subnet_entry = ttk.Entry(subnet_frame, textvariable=self.subnet_var)
-        self.subnet_entry.pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        # Gateway
-        gateway_frame = ttk.Frame(network_frame)
-        gateway_frame.pack(fill="x", pady=5)
-        ttk.Label(gateway_frame, text="🚪", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(gateway_frame, text="Gateway:").pack(side="left")
-        self.gateway_var = tk.StringVar()
-        self.gateway_entry = ttk.Entry(gateway_frame, textvariable=self.gateway_var)
-        self.gateway_entry.pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        # DNS
-        dns_frame = ttk.Frame(network_frame)
-        dns_frame.pack(fill="x", pady=5)
-        ttk.Label(dns_frame, text="📚", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(dns_frame, text="DNS Server:").pack(side="left")
-        self.dns_var = tk.StringVar()
-        self.dns_entry = ttk.Entry(dns_frame, textvariable=self.dns_var)
-        self.dns_entry.pack(side="right", fill="x", expand=True, padx=(10, 0))
-
-        # Additional Options
-        options_frame = ttk.LabelFrame(network_frame, text=" 📝 Additional Options ", padding=10)
-        options_frame.pack(fill="x", pady=(5, 0))
-        
-        self.auto_logon_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Enable Auto Logon", variable=self.auto_logon_var).pack(fill="x", pady=2)
-        
-        self.skip_eula_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Skip EULA", variable=self.skip_eula_var).pack(fill="x", pady=2)
-        
-        self.skip_updates_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="Skip Windows Update", variable=self.skip_updates_var).pack(fill="x", pady=2)
-
-        self.disable_telemetry_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Disable Telemetry", variable=self.disable_telemetry_var).pack(fill="x", pady=2)
-
-        self.disable_cortana_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Disable Cortana", variable=self.disable_cortana_var).pack(fill="x", pady=2)
-
-        self.remove_bloatware_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Remove Bloatware", variable=self.remove_bloatware_var).pack(fill="x", pady=2)
-        
         # Pack the canvas and scrollbar
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-    def generate_xml_content(self):
-        # Prepare disk configuration based on layout choice
-        disk_config = ""
-        if self.disk_layout_var.get() == "single":
-            disk_config = f'''
-                <DiskConfiguration>
-                    <Disk wcm:action="add">
-                        <DiskID>0</DiskID>
-                        <WillWipeDisk>true</WillWipeDisk>
-                        <CreatePartitions>
-                            <CreatePartition wcm:action="add">
-                                <Order>1</Order>
-                                <Type>Primary</Type>
-                                <Size>{int(self.sys_size_var.get()) * 1024}</Size>
-                            </CreatePartition>
-                        </CreatePartitions>
-                        <ModifyPartitions>
-                            <ModifyPartition wcm:action="add">
-                                <Order>1</Order>
-                                <PartitionID>1</PartitionID>
-                                <Format>NTFS</Format>
-                                <Label>Windows</Label>
-                            </ModifyPartition>
-                        </ModifyPartitions>
-                    </Disk>
-                </DiskConfiguration>'''
+    def setup_tools_tab(self):
+        tools_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
+        self.notebook.add(tools_tab, text=" 🛠️ Tools ")
+
+        # Create a frame for the tools grid
+        tools_frame = ttk.LabelFrame(tools_tab, text="🔧 System Tools", padding="15")
+        tools_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create grid of tool buttons
+        # Row 1
+        self.create_tool_button(tools_frame, "🗑️ Empty Recycle Bin", self.empty_recycle_bin, 0, 0)
+        self.create_tool_button(tools_frame, "📊 Task Manager", self.open_task_manager, 0, 1)
+        self.create_tool_button(tools_frame, "⚙️ Control Panel", self.open_control_panel, 0, 2)
+
+        # Row 2
+        self.create_tool_button(tools_frame, "🖥️ System Settings", self.open_system_settings, 1, 0)
+        self.create_tool_button(tools_frame, "🔌 Device Manager", self.open_device_manager, 1, 1)
+        self.create_tool_button(tools_frame, "🧹 Disk Cleanup", self.open_disk_cleanup, 1, 2)
+
+        # Row 3
+        self.create_tool_button(tools_frame, "🔧 Services", self.open_services, 2, 0)
+
+        # Configure grid
+        for i in range(3):
+            tools_frame.grid_columnconfigure(i, weight=1)
+        for i in range(3):
+            tools_frame.grid_rowconfigure(i, weight=1)
+
+        # System cleanup info frame
+        cleanup_frame = ttk.LabelFrame(tools_tab, text="🧹 System Cleanup Info", padding="15")
+        cleanup_frame.pack(fill=tk.X, pady=(15, 0))
+
+        self.cleanup_label = ttk.Label(cleanup_frame, text="Calculating cleanup size...", justify=tk.LEFT)
+        self.cleanup_label.pack(fill=tk.X, padx=5, pady=5)
+
+        # Start updating system info
+        self.update_system_info()
+
+    def setup_unattend_tab(self):
+        unattend_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
+        self.notebook.add(unattend_tab, text=" 📝 Unattend ")
+
+        # Create notebook for settings categories
+        self.settings_notebook = ttk.Notebook(unattend_tab)
+        self.settings_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Create all frames first
+        self.system_frame = self.create_system_tab()
+        self.regional_frame = self.create_regional_tab()
+        self.account_frame = self.create_account_tab()
+        self.privacy_frame = self.create_privacy_tab()
+        self.apps_frame = self.create_apps_tab()
+
+        # Add frames to notebook
+        self.settings_notebook.add(self.system_frame, text="💻 System")
+        self.settings_notebook.add(self.regional_frame, text="🌍 Regional")
+        self.settings_notebook.add(self.account_frame, text="👤 User Account")
+        self.settings_notebook.add(self.privacy_frame, text="🔒 Privacy")
+        self.settings_notebook.add(self.apps_frame, text="📦 Apps")
+
+        # Navigation buttons frame at the bottom
+        nav_frame = ttk.Frame(unattend_tab)
+        nav_frame.pack(fill=tk.X, padx=5, pady=10)
+
+        # Back button (hidden initially)
+        self.back_btn = ttk.Button(nav_frame, text="← Back", command=self.prev_tab, style='Secondary.TButton')
+        self.back_btn.pack(side=tk.LEFT, padx=5)
+        self.back_btn.pack_forget()  # Hide initially
+
+        # Next/Finish button
+        self.next_btn = ttk.Button(nav_frame, text="Next →", command=self.next_tab, style='Accent.TButton')
+        self.next_btn.pack(side=tk.RIGHT, padx=5)
+
+        # Save button (hidden initially)
+        self.save_btn = ttk.Button(nav_frame, text="Save Unattend File", command=self.save_unattend, style='Accent.TButton')
+        self.save_btn.pack(side=tk.RIGHT, padx=5)
+        self.save_btn.pack_forget()  # Hide initially
+
+        # Bind tab change event
+        self.settings_notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
+
+    def setup_about_tab(self):
+        about_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
+        self.notebook.add(about_tab, text=" ℹ️ About ")
+
+        # Create main content frame
+        content_frame = ttk.Frame(about_tab)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # App title and version
+        title_label = ttk.Label(content_frame, text="MTech WinTool", style="AboutTitle.TLabel")
+        title_label.pack(pady=(0, 10))
+
+        version_label = ttk.Label(content_frame, text="Beta Version 0.0.4a", style="About.TLabel")
+        version_label.pack(pady=(0, 20))
+
+        # Features frame
+        features_frame = ttk.LabelFrame(content_frame, text="Features", padding=15)
+        features_frame.pack(fill=tk.X, pady=(0, 20))
+
+        features_text = """📦 Package Management with Winget Integration
+🖥️ System Monitoring and Performance Metrics
+🛠️ System Tools and Utilities
+📝 Windows Unattend File Creation
+🌙 Dark Mode Support"""
+
+        features_label = ttk.Label(features_frame, text=features_text, style="About.TLabel", justify=tk.LEFT)
+        features_label.pack(anchor="w", padx=10)
+
+        # System info frame
+        system_frame = ttk.LabelFrame(content_frame, text="System Information", padding=15)
+        system_frame.pack(fill=tk.X)
+
+        system_info = f"""💻 OS: {os.name.upper()}
+🐍 Python Version: {sys.version.split()[0]}
+⚙️ Architecture: {platform.machine()}
+🖥️ Platform: {platform.platform()}"""
+
+        system_label = ttk.Label(system_frame, text=system_info, style="About.TLabel", justify=tk.LEFT)
+        system_label.pack(anchor="w", padx=10)
+
+        # Credits frame
+        credits_frame = ttk.LabelFrame(content_frame, text="Credits", padding=15)
+        credits_frame.pack(fill=tk.X, pady=(20, 0))
+
+        credits_text = """👨‍💻 Created by: MTechware
+🎨 Theme: Sun Valley (sv-ttk)
+🎯 Icons: Segoe Fluent Icons"""
+
+        credits_label = ttk.Label(credits_frame, text=credits_text, style="About.TLabel", justify=tk.LEFT)
+        credits_label.pack(anchor="w", padx=10)
+
+    def on_tab_changed(self, event):
+        current_tab = self.settings_notebook.select()
+        tab_id = self.settings_notebook.index(current_tab)
+        total_tabs = self.settings_notebook.index('end')
+
+        # Show/hide back button
+        if tab_id > 0:
+            self.back_btn.pack(side=tk.LEFT, padx=5)
         else:
-            disk_config = f'''
-                <DiskConfiguration>
-                    <Disk wcm:action="add">
-                        <DiskID>0</DiskID>
-                        <WillWipeDisk>true</WillWipeDisk>
-                        <CreatePartitions>
-                            <CreatePartition wcm:action="add">
-                                <Order>1</Order>
-                                <Type>Primary</Type>
-                                <Size>{int(self.sys_size_var.get()) * 1024}</Size>
-                            </CreatePartition>
-                            <CreatePartition wcm:action="add">
-                                <Order>2</Order>
-                                <Type>Primary</Type>
-                                <Extend>true</Extend>
-                            </CreatePartition>
-                        </CreatePartitions>
-                        <ModifyPartitions>
-                            <ModifyPartition wcm:action="add">
-                                <Order>1</Order>
-                                <PartitionID>1</PartitionID>
-                                <Format>NTFS</Format>
-                                <Label>Windows</Label>
-                            </ModifyPartition>
-                            <ModifyPartition wcm:action="add">
-                                <Order>2</Order>
-                                <PartitionID>2</PartitionID>
-                                <Format>NTFS</Format>
-                                <Label>Data</Label>
-                            </ModifyPartition>
-                        </ModifyPartitions>
-                    </Disk>
-                </DiskConfiguration>'''
+            self.back_btn.pack_forget()
 
-        # Network configuration
-        network_config = ""
-        if self.network_type_var.get() == "static":
-            network_config = f'''
-            <component name="Microsoft-Windows-TCPIP" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-                <Interfaces>
-                    <Interface wcm:action="add">
-                        <Ipv4Settings>
-                            <DhcpEnabled>false</DhcpEnabled>
-                        </Ipv4Settings>
-                        <Identifier>Ethernet</Identifier>
-                        <UnicastIpAddresses>
-                            <IpAddress wcm:action="add">{self.ip_var.get()}</IpAddress>
-                        </UnicastIpAddresses>
-                        <Routes>
-                            <Route wcm:action="add">
-                                <Prefix>0.0.0.0/0</Prefix>
-                                <NextHopAddress>{self.gateway_var.get()}</NextHopAddress>
-                            </Route>
-                        </Routes>
-                    </Interface>
-                </Interfaces>
-            </component>
-            <component name="Microsoft-Windows-DNS-Client" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-                <Interfaces>
-                    <Interface wcm:action="add">
-                        <DNSServerSearchOrder>
-                            <IpAddress wcm:action="add">{self.dns_var.get()}</IpAddress>
-                        </DNSServerSearchOrder>
-                    </Interface>
-                </Interfaces>
-            </component>'''
-
-        # Windows Update configuration
-        update_config = ""
-        if self.update_behavior_var.get() == "disable":
-            update_config = '''
-            <component name="Microsoft-Windows-WindowsUpdate-AU" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-                <NoAutoUpdate>true</NoAutoUpdate>
-            </component>'''
-        elif self.update_behavior_var.get() == "downloadonly":
-            update_config = '''
-            <component name="Microsoft-Windows-WindowsUpdate-AU" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-                <AUOptions>3</AUOptions>
-                <NoAutoReboot>true</NoAutoReboot>
-            </component>'''
-
-        # Power settings
-        power_config = ""
-        if self.power_plan_var.get() != "balanced":
-            power_scheme = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" if self.power_plan_var.get() == "performance" else "a1841308-3541-4fab-bc81-f71556f20b4a"
-            power_config = f'''
-            <component name="Microsoft-Windows-PowerShell" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-                <FirstLogonCommands>
-                    <SynchronousCommand wcm:action="add">
-                        <CommandLine>powercfg /setactive {power_scheme}</CommandLine>
-                        <Order>1</Order>
-                    </SynchronousCommand>
-                </FirstLogonCommands>
-            </component>'''
-
-        # Privacy settings
-        privacy_config = ""
-        if self.disable_telemetry_var.get() or self.disable_cortana_var.get():
-            privacy_config = '''
-            <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-                <FirstLogonCommands>'''
-            if self.disable_telemetry_var.get():
-                privacy_config += '''
-                    <SynchronousCommand wcm:action="add">
-                        <CommandLine>reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f</CommandLine>
-                        <Order>1</Order>
-                    </SynchronousCommand>'''
-            if self.disable_cortana_var.get():
-                privacy_config += '''
-                    <SynchronousCommand wcm:action="add">
-                        <CommandLine>reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f</CommandLine>
-                        <Order>2</Order>
-                    </SynchronousCommand>'''
-            privacy_config += '''
-                </FirstLogonCommands>
-            </component>'''
-
-        xml_template = f'''<?xml version="1.0" encoding="utf-8"?>
-<unattend xmlns="urn:schemas-microsoft-com:unattend">
-    <settings pass="windowsPE">
-        <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-            {disk_config}
-            <ImageInstall>
-                <OSImage>
-                    <InstallTo>
-                        <DiskID>0</DiskID>
-                        <PartitionID>1</PartitionID>
-                    </InstallTo>
-                    <InstallToAvailablePartition>false</InstallToAvailablePartition>
-                </OSImage>
-            </ImageInstall>
-            <UserData>
-                <AcceptEula>{str(self.skip_eula_var.get()).lower()}</AcceptEula>
-                <ProductKey>
-                    <Key>{self.key_var.get()}</Key>
-                </ProductKey>
-            </UserData>
-            <EnableFirewall>true</EnableFirewall>
-        </component>
-        <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-            <SetupUILanguage>
-                <UILanguage>{self.lang_var.get()}</UILanguage>
-            </SetupUILanguage>
-            <InputLocale>{self.keyboard_var.get()}</InputLocale>
-            <SystemLocale>{self.lang_var.get()}</SystemLocale>
-            <UILanguage>{self.lang_var.get()}</UILanguage>
-            <UserLocale>{self.lang_var.get()}</UserLocale>
-        </component>
-    </settings>
-    <settings pass="specialize">
-        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-            <ComputerName>{self.computer_var.get()}</ComputerName>
-            <RegisteredOrganization>{self.org_var.get()}</RegisteredOrganization>
-            <TimeZone>{self.timezone_var.get()}</TimeZone>
-        </component>
-        {network_config}
-        {update_config}
-        {power_config}
-    </settings>
-    <settings pass="oobeSystem">
-        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-            <AutoLogon>
-                <Enabled>{str(self.auto_logon_var.get()).lower()}</Enabled>
-                <Username>{self.username_var.get()}</Username>
-                <Password>
-                    <Value>{self.password_var.get()}</Value>
-                    <PlainText>true</PlainText>
-                </Password>
-            </AutoLogon>
-            <OOBE>
-                <HideEULAPage>{str(self.skip_eula_var.get()).lower()}</HideEULAPage>
-                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-                <NetworkLocation>Work</NetworkLocation>
-                <ProtectYourPC>3</ProtectYourPC>
-                <SkipMachineOOBE>true</SkipMachineOOBE>
-                <SkipUserOOBE>true</SkipUserOOBE>
-            </OOBE>
-            <UserAccounts>
-                <LocalAccounts>
-                    <LocalAccount wcm:action="add">
-                        <Password>
-                            <Value>{self.password_var.get()}</Value>
-                            <PlainText>true</PlainText>
-                        </Password>
-                        <DisplayName>{self.username_var.get()}</DisplayName>
-                        <Group>Administrators</Group>
-                        <Name>{self.username_var.get()}</Name>
-                    </LocalAccount>
-                </LocalAccounts>
-            </UserAccounts>
-            {privacy_config}
-        </component>
-        <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-            <InputLocale>{self.keyboard_var.get()}</InputLocale>
-            <SystemLocale>{self.lang_var.get()}</SystemLocale>
-            <UILanguage>{self.lang_var.get()}</UILanguage>
-            <UserLocale>{self.lang_var.get()}</UserLocale>
-        </component>
-    </settings>
-</unattend>'''
-        return xml_template
-    
-    def generate_unattend_xml(self):
-        try:
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".xml",
-                filetypes=[("XML files", "*.xml")],
-                initialfile="autounattend.xml"
-            )
-            if file_path:
-                xml_content = self.generate_xml_content()
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(xml_content)
-                messagebox.showinfo("Success", f"Unattend XML saved to:\n{file_path}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save XML: {str(e)}")
-    
-    def update_software_status(self, software_name=None, is_installed=None):
-        """Update software installation status"""
-        try:
-            if software_name is not None and is_installed is not None:
-                # Update single software status
-                self.software_status[software_name] = is_installed
-                
-                # Update UI if the software is in the tree
-                if hasattr(self, 'software_items') and software_name in self.software_items:
-                    item = self.software_items[software_name]
-                    if is_installed:
-                        self.software_tree.item(item, tags=('installed',))
-                    else:
-                        self.software_tree.item(item, tags=())
-            else:
-                # Update all software status
-                installed_software = self.get_installed_software()
-                
-                # Update status for each software
-                for category, software_list in self.software_descriptions.items():
-                    for software in software_list:
-                        software.update_status(installed_software)
-                        
-            # Save status if auto-refresh is disabled
-            if not self.settings.get("auto_refresh", True):
-                self.save_software_status()
-                    
-        except Exception as e:
-            print(f"Error updating software status: {str(e)}")
-            if hasattr(self, 'status_label'):
-                self.status_label.config(text="Error checking software status")
-    
-    def load_software_status(self):
-        self.software_status = {}
-        if hasattr(self, 'status_file') and os.path.exists(self.status_file):
-            try:
-                with open(self.status_file, 'r') as f:
-                    self.software_status = json.load(f)
-            except Exception as e:
-                print(f"Error loading software status: {str(e)}")
-
-    def save_software_status(self):
-        """Save software status to file"""
-        if hasattr(self, 'status_file'):
-            try:
-                with open(self.status_file, 'w') as f:
-                    json.dump(self.software_status, f, indent=4)
-            except Exception as e:
-                print(f"Error saving software status: {str(e)}")
-
-    def check_software_status(self):
-        """Check software installation status"""
-        if self.settings.get("auto_refresh", True):
-            # Always update if auto-refresh is enabled
-            self.update_software_status()
+        # Update next button text and show/hide save button
+        if tab_id == total_tabs - 1:  # Last tab
+            self.next_btn.pack_forget()
+            self.save_btn.pack(side=tk.RIGHT, padx=5)
         else:
-            # Check file if auto-refresh is disabled
-            if not hasattr(self, 'status_file') or not os.path.exists(self.status_file):
-                self.update_software_status()
-            else:
-                self.load_software_status()
+            self.save_btn.pack_forget()
+            self.next_btn.pack(side=tk.RIGHT, padx=5)
 
-    def refresh_software_status(self):
-        """Refresh the software status display"""
-        if self.settings.get("auto_refresh", True):
-            # Always update if auto-refresh is enabled
-            self.update_software_status()
-        else:
-            # Use existing status if available
-            self.check_software_status()
-            
-        self.update_software_tree()
-        self.status_label.config(text="Software status check complete")
-        self.progress_bar.stop()
-        self.progress_bar.grid_remove()
+    def next_tab(self):
+        current_tab = self.settings_notebook.select()
+        current_idx = self.settings_notebook.index(current_tab)
+        next_idx = current_idx + 1
+        if next_idx < self.settings_notebook.index('end'):
+            self.settings_notebook.select(next_idx)
 
-    def update_software_tree(self):
-        """Update software tree with current status"""
-        for category, software_list in self.software_descriptions.items():
-            for software in software_list:
-                software_name = software.name
-                if software_name in self.software_status:
-                    is_installed = self.software_status[software_name]
-                    if is_installed:
-                        self.software_tree.item(self.software_items[software_name], tags=('installed',))
-                    else:
-                        self.software_tree.item(self.software_items[software_name], tags=())
-    
-    def toggle_category(self, event):
-        item = self.software_tree.identify('item', event.x, event.y)
-        if item in self.category_nodes.values():
-            if self.software_tree.item(item, "open"):
-                self.software_tree.item(item, open=False)
-            else:
-                self.software_tree.item(item, open=True)
-    
-    def filter_software(self):
-        search_text = self.search_var.get().lower()
+    def prev_tab(self):
+        current_tab = self.settings_notebook.select()
+        current_idx = self.settings_notebook.index(current_tab)
+        prev_idx = current_idx - 1
+        if prev_idx >= 0:
+            self.settings_notebook.select(prev_idx)
+
+    def create_system_tab(self):
+        system_frame = ttk.Frame(self.settings_notebook)
         
-        # Hide all items first
-        for category_node in self.category_nodes.values():
-            self.software_tree.detach(category_node)
+        system_settings = ttk.LabelFrame(system_frame, text="System Settings", padding="10")
+        system_settings.pack(fill=tk.X, padx=5, pady=5)
         
-        # Show items that match the filter
-        for category, node in self.category_nodes.items():
-            if not self.category_vars[category].get():
-                continue
-                
-            show_category = False
-            category_children = self.software_tree.get_children(node)
-            
-            for child in category_children:
-                values = self.software_tree.item(child)['values']
-                software_name = values[0].lower()
-                description = values[1].lower()
-                
-                if search_text in software_name or search_text in description:
-                    show_category = True
-                    break
-            
-            if show_category:
-                self.software_tree.reattach(node, "", "end")
-    
-    def refresh_software_status(self, force=False):
-        """Refresh software installation status using batch processing"""
-        def check_status():
-            if not hasattr(self, 'root') or not self.root:
-                return
+        ttk.Label(system_settings, text="Computer Name:").pack(anchor='w')
+        self.computer_name = ttk.Entry(system_settings)
+        self.computer_name.pack(fill=tk.X, pady=(0, 5))
+        self.computer_name.insert(0, self.unattend_creator.settings['computer_name'])
 
-            try:
-                # Prepare command to check all software at once
-                all_ids = []
-                id_to_name = {}
-                
-                for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-                    for software_name, software_info in software_dict.items():
-                        # Use cache if available and not forcing refresh
-                        if not force and software_name in self.software_status:
-                            if hasattr(self, 'root') and self.root:
-                                self.root.after(0, lambda name=software_name, installed=self.software_status[software_name]:
-                                    self.update_software_status(name, installed) if hasattr(self, 'root') else None)
-                            continue
-                            
-                        all_ids.append(software_info['id'])
-                        id_to_name[software_info['id']] = software_name
+        ttk.Label(system_settings, text="Organization:").pack(anchor='w')
+        self.organization = ttk.Entry(system_settings)
+        self.organization.pack(fill=tk.X, pady=(0, 5))
+        self.organization.insert(0, self.unattend_creator.settings['organization'])
 
-                if all_ids:  # Only proceed if we have IDs to check
-                    # Update status
-                    if hasattr(self, 'status_label'):
-                        self.root.after(0, lambda: 
-                            self.status_label.config(text="Checking software status...") if hasattr(self, 'status_label') else None)
+        ttk.Label(system_settings, text="Owner:").pack(anchor='w')
+        self.owner = ttk.Entry(system_settings)
+        self.owner.pack(fill=tk.X, pady=(0, 5))
+        self.owner.insert(0, self.unattend_creator.settings['owner'])
 
-                    # Run single winget command for all software
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    
-                    result = subprocess.run(
-                        ["winget", "list"],
-                        capture_output=True,
-                        text=True,
-                        startupinfo=startupinfo
-                    )
+        ttk.Label(system_settings, text="Product Key:").pack(anchor='w')
+        self.product_key = ttk.Entry(system_settings)
+        self.product_key.pack(fill=tk.X, pady=(0, 5))
 
-                    # Process output to determine installed software
-                    output = result.stdout.lower()
-                    for software_id in all_ids:
-                        is_installed = software_id.lower() in output
-                        software_name = id_to_name[software_id]
-                        
-                        # Update UI in main thread
-                        if hasattr(self, 'root') and self.root:
-                            self.root.after(0, lambda name=software_name, installed=is_installed:
-                                self.update_software_status(name, installed) if hasattr(self, 'root') else None)
+        ttk.Label(system_settings, text="Windows Edition:").pack(anchor='w')
+        self.windows_edition = ttk.Combobox(system_settings, values=UnattendCreator.get_windows_editions())
+        self.windows_edition.pack(fill=tk.X, pady=(0, 5))
+        self.windows_edition.set(self.unattend_creator.settings['windows_edition'])
 
-                # Schedule final status update in main thread
-                if hasattr(self, 'root') and self.root and hasattr(self, 'status_label'):
-                    self.root.after(0, lambda: 
-                        self.status_label.config(text="Status check complete!") if hasattr(self, 'status_label') else None)
+        return system_frame
 
-            except Exception as e:
-                if hasattr(self, 'root') and self.root:
-                    print(f"Error in check_status: {str(e)}")
-                    if hasattr(self, 'status_label'):
-                        self.root.after(0, lambda: 
-                            self.status_label.config(text="Error checking software status") if hasattr(self, 'status_label') else None)
-            finally:
-                # Schedule progress bar cleanup in main thread if widgets still exist
-                if hasattr(self, 'root') and self.root:
-                    if hasattr(self, 'progress_bar'):
-                        self.root.after(0, lambda: 
-                            self.progress_bar.stop() if hasattr(self, 'progress_bar') else None)
-                    if hasattr(self, 'status_label'):
-                        self.root.after(1500, lambda: 
-                            self.status_label.config(text="") if hasattr(self, 'status_label') else None)
+    def create_regional_tab(self):
+        regional_frame = ttk.Frame(self.settings_notebook)
 
-        # Start progress bar if it exists
-        if hasattr(self, 'progress_bar'):
-            self.progress_bar.start()
+        regional_settings = ttk.LabelFrame(regional_frame, text="Regional Settings", padding="10")
+        regional_settings.pack(fill=tk.X, padx=5, pady=5)
 
-        # Run check in background thread
-        threading.Thread(target=check_status, daemon=True).start()
-    
-    def install_selected_software(self):
-        """Install selected software using winget"""
-        selected = self.software_tree.selection()
-        if not selected:
-            messagebox.showinfo("Select Software", "Please select software to install")
-            return
+        ttk.Label(regional_settings, text="Time Zone:").pack(anchor='w')
+        self.timezone = ttk.Combobox(regional_settings, values=UnattendCreator.get_available_timezones())
+        self.timezone.pack(fill=tk.X, pady=(0, 5))
+        self.timezone.set(self.unattend_creator.settings['timezone'])
 
-        # Filter out category nodes and get valid software selections
-        software_to_install = []
-        for item in selected:
-            item_data = self.software_tree.item(item)
-            values = item_data.get("values", [])
-            
-            # Skip if it's a category (no values) or not enough values
-            if not values or len(values) < 2:
-                continue
-                
-            software_name = values[0]
-            # Find the category for this software
-            for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-                if software_name in software_dict:
-                    software_to_install.append((item, category, software_name))
-                    break
+        ttk.Label(regional_settings, text="Language:").pack(anchor='w')
+        languages = list(UnattendCreator.get_available_languages().values())
+        self.language = ttk.Combobox(regional_settings, values=languages)
+        self.language.pack(fill=tk.X, pady=(0, 5))
+        self.language.set(UnattendCreator.get_available_languages()[self.unattend_creator.settings['language']])
 
-        if not software_to_install:
-            messagebox.showinfo("Select Software", "Please select valid software to install")
-            return
-        
-        # Create progress window
-        progress_window = Toplevel(self.root)
-        progress_window.title("Installing Software")
-        progress_window.geometry("400x150")
-        
-        # Center the window
-        progress_window.transient(self.root)
-        progress_window.grab_set()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 150) // 2
-        progress_window.geometry(f"+{x}+{y}")
-        
-        # Add progress elements
-        frame = ttk.Frame(progress_window, padding="20")
-        frame.pack(fill='both', expand=True)
-        
-        status_label = ttk.Label(frame, text="Starting installation...", wraplength=350)
-        status_label.pack(fill='x', pady=(0, 10))
-        
-        progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=350)
-        progress_bar.pack(fill='x', pady=(0, 10))
-        progress_bar.start(10)
-        
-        def install_software():
-            try:
-                for item, category, software_name in software_to_install:
-                    winget_id = self.SOFTWARE_CATEGORIES[category][software_name]['id']
-                    try:
-                        status_label.config(text=f"Installing {software_name}...")
-                        
-                        # Run winget install
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                        
-                        result = subprocess.run(
-                            ["winget", "install", "-e", "--id", winget_id, "--accept-source-agreements", "--accept-package-agreements"],
-                            capture_output=True,
-                            text=True,
-                            startupinfo=startupinfo,
-                            timeout=180  # 3 minute timeout
-                        )
-                        
-                        if result.returncode == 0:
-                            # Update status and UI
-                            self.update_software_status(software_name, True)
-                            status_label.config(text=f"Successfully installed {software_name}")
-                            print(f"Successfully installed {software_name}")
-                        else:
-                            error_msg = f"Failed to install {software_name}. Error: {result.stderr}"
-                            status_label.config(text=error_msg)
-                            print(error_msg)
-                            messagebox.showerror("Installation Error", error_msg)
-                    except Exception as e:
-                        error_msg = f"Error installing {software_name}: {str(e)}"
-                        status_label.config(text=error_msg)
-                        print(error_msg)
-                        messagebox.showerror("Installation Error", error_msg)
-            finally:
-                # Stop progress and close window
-                progress_bar.stop()
-                progress_window.after(1500, progress_window.destroy)
-                
-        # Run installation in a separate thread
-        threading.Thread(target=install_software, daemon=True).start()
-    
-    def update_stats(self):
-        while self.monitoring:
-            try:
-                # Update CPU usage
-                cpu_percent = psutil.cpu_percent()
-                
-                # Update Memory usage
-                memory = psutil.virtual_memory()
-                
-                # Update Disk usage
-                disk = psutil.disk_usage('/')
-                
-                # Update System Monitor tab
-                if self.cpu_label:
-                    self.cpu_label.configure(text=f"{cpu_percent}%")
-                    self.cpu_progress['value'] = cpu_percent
-                
-                if self.memory_label:
-                    self.memory_label.configure(text=f"{memory.percent}%")
-                    self.memory_progress['value'] = memory.percent
-                
-                if self.disk_label:
-                    self.disk_label.configure(text=f"{disk.percent}%")
-                    self.disk_progress['value'] = disk.percent
-                
-                # Update Hardware tab
-                if hasattr(self, 'cpu_usage_label'):
-                    self.cpu_usage_label.configure(text=f"{cpu_percent}%")
-                    self.cpu_usage_progress['value'] = cpu_percent
-                
-                if hasattr(self, 'memory_usage_label'):
-                    self.memory_usage_label.configure(text=f"{memory.percent}%")
-                    self.memory_usage_progress['value'] = memory.percent
-                
-                # Update Network tab
-                if hasattr(self, 'net_labels'):
-                    net_io = psutil.net_io_counters(pernic=True)
-                    for nic, (sent_label, recv_label) in self.net_labels.items():
-                        if nic in net_io:
-                            sent_label.configure(text=f"Sent: {self.format_bytes(net_io[nic].bytes_sent)}")
-                            recv_label.configure(text=f"Received: {self.format_bytes(net_io[nic].bytes_recv)}")
-                
-                time.sleep(1)
-            except Exception as e:
-                print(f"Error updating stats: {str(e)}")
-                time.sleep(1)
-    
-    def format_bytes(self, bytes):
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if bytes < 1024:
-                return f"{bytes:.2f} {unit}"
-            bytes /= 1024
-        return f"{bytes:.2f} PB"
-    
+        ttk.Label(regional_settings, text="Keyboard Layout:").pack(anchor='w')
+        keyboard_layouts = list(UnattendCreator.get_keyboard_layouts().values())
+        self.keyboard_layout = ttk.Combobox(regional_settings, values=keyboard_layouts)
+        self.keyboard_layout.pack(fill=tk.X, pady=(0, 5))
+        self.keyboard_layout.set(UnattendCreator.get_keyboard_layouts()[self.unattend_creator.settings['keyboard_layout']])
+
+        return regional_frame
+
+    def create_account_tab(self):
+        account_frame = ttk.Frame(self.settings_notebook)
+
+        account_settings = ttk.LabelFrame(account_frame, text="User Account Settings", padding="10")
+        account_settings.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(account_settings, text="Username:").pack(anchor='w')
+        self.username = ttk.Entry(account_settings)
+        self.username.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(account_settings, text="Password:").pack(anchor='w')
+        self.password = ttk.Entry(account_settings, show="*")
+        self.password.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(account_settings, text="Account Type:").pack(anchor='w')
+        self.account_type = ttk.Combobox(account_settings, values=['Administrator', 'Standard'])
+        self.account_type.pack(fill=tk.X, pady=(0, 5))
+        self.account_type.set('Administrator')
+
+        self.auto_logon = tk.BooleanVar(value=False)
+        ttk.Checkbutton(account_settings, text="Enable Auto Logon", variable=self.auto_logon).pack(anchor='w', pady=2)
+
+        ttk.Label(account_settings, text="Auto Logon Count:").pack(anchor='w')
+        self.auto_logon_count = ttk.Spinbox(account_settings, from_=1, to=999, width=10)
+        self.auto_logon_count.pack(fill=tk.X, pady=(0, 5))
+        self.auto_logon_count.set(self.unattend_creator.settings['auto_logon_count'])
+
+        self.disable_admin = tk.BooleanVar(value=False)
+        ttk.Checkbutton(account_settings, text="Disable Administrator Account", variable=self.disable_admin).pack(anchor='w', pady=2)
+
+        self.enable_guest = tk.BooleanVar(value=False)
+        ttk.Checkbutton(account_settings, text="Enable Guest Account", variable=self.enable_guest).pack(anchor='w', pady=2)
+
+        return account_frame
+
+    def create_privacy_tab(self):
+        privacy_frame = ttk.Frame(self.settings_notebook)
+
+        privacy_settings = ttk.LabelFrame(privacy_frame, text="Privacy Settings", padding="10")
+        privacy_settings.pack(fill=tk.X, padx=5, pady=5)
+
+        self.disable_telemetry = tk.BooleanVar(value=True)
+        ttk.Checkbutton(privacy_settings, text="Disable Telemetry", variable=self.disable_telemetry).pack(anchor='w', pady=2)
+
+        self.disable_cortana = tk.BooleanVar(value=True)
+        ttk.Checkbutton(privacy_settings, text="Disable Cortana", variable=self.disable_cortana).pack(anchor='w', pady=2)
+
+        self.disable_consumer = tk.BooleanVar(value=True)
+        ttk.Checkbutton(privacy_settings, text="Disable Consumer Features", variable=self.disable_consumer).pack(anchor='w', pady=2)
+
+        self.disable_tips = tk.BooleanVar(value=True)
+        ttk.Checkbutton(privacy_settings, text="Disable Windows Tips", variable=self.disable_tips).pack(anchor='w', pady=2)
+
+        self.disable_suggestions = tk.BooleanVar(value=True)
+        ttk.Checkbutton(privacy_settings, text="Disable App Suggestions", variable=self.disable_suggestions).pack(anchor='w', pady=2)
+
+        return privacy_frame
+
+    def create_apps_tab(self):
+        apps_frame = ttk.Frame(self.settings_notebook)
+
+        apps_settings = ttk.LabelFrame(apps_frame, text="App Settings", padding="10")
+        apps_settings.pack(fill=tk.X, padx=5, pady=5)
+
+        self.remove_inbox = tk.BooleanVar(value=True)
+        ttk.Checkbutton(apps_settings, text="Remove Inbox Apps", variable=self.remove_inbox).pack(anchor='w', pady=2)
+
+        self.install_winget = tk.BooleanVar(value=True)
+        ttk.Checkbutton(apps_settings, text="Install Winget", variable=self.install_winget).pack(anchor='w', pady=2)
+
+        self.install_chocolatey = tk.BooleanVar(value=False)
+        ttk.Checkbutton(apps_settings, text="Install Chocolatey", variable=self.install_chocolatey).pack(anchor='w', pady=2)
+
+        self.install_office = tk.BooleanVar(value=False)
+        ttk.Checkbutton(apps_settings, text="Install Microsoft Office", variable=self.install_office).pack(anchor='w', pady=2)
+
+        ttk.Label(apps_settings, text="Office Edition:").pack(anchor='w')
+        self.office_edition = ttk.Combobox(apps_settings, values=UnattendCreator.get_office_editions())
+        self.office_edition.pack(fill=tk.X, pady=(0, 5))
+        self.office_edition.set(self.unattend_creator.settings['office_edition'])
+
+        return apps_frame
+
+    def create_tool_button(self, parent, text, command, row, col):
+        btn = ttk.Button(parent, text=text, command=command, style="Tool.TButton", width=20)
+        btn.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
+
     def empty_recycle_bin(self):
-        try:
-            import winshell
-            winshell.recycle_bin().empty(confirm=True, show_progress=True, sound=True)
-            messagebox.showinfo("Success", "Recycle Bin emptied successfully!")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to empty Recycle Bin: {str(e)}")
-    
-    def toggle_theme(self):
-        if self.theme_var.get():
-            sv_ttk.set_theme("dark")
+        success, message = self.sys_tools.empty_recycle_bin()
+        if success:
+            messagebox.showinfo("Success", message)
         else:
-            sv_ttk.set_theme("light")
-    
-    def start_move(self, event):
-        self.x = event.x
-        self.y = event.y
+            messagebox.showerror("Error", message)
+        self.update_system_info()
 
-    def do_move(self, event):
-        deltax = event.x - self.x
-        deltay = event.y - self.y
-        x = self.root.winfo_x() + deltax
-        y = self.root.winfo_y() + deltay
-        self.root.geometry(f"+{x}+{y}")
-    
-    def toggle_maximize(self):
-        if self.is_maximized:
-            self.root.geometry(self.window_size)
-            self.is_maximized = False
-        else:
-            self.window_size = self.root.geometry()
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
-            self.root.geometry(f"{screen_width}x{screen_height}+0+0")
-            self.is_maximized = True
-    
-    def setup_settings(self):
-        # Create main frame with padding
-        main_frame = ttk.Frame(self.tab_settings, padding=20)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Left side - App Settings
-        left_frame = ttk.LabelFrame(main_frame, text=" 🎨 Appearance & Behavior ", padding=15)
-        left_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        
-        # Startup behavior
-        startup_frame = ttk.Frame(left_frame)
-        startup_frame.pack(fill="x", pady=10)
-        ttk.Label(startup_frame, text="🚀", font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-        ttk.Label(startup_frame, text="Startup:", font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.startup_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(left_frame, text="Start with Windows", variable=self.startup_var).pack(fill="x", pady=2)
-        
-        # Right side - Advanced Settings
-        right_frame = ttk.LabelFrame(main_frame, text=" ⚙️ Advanced Settings ", padding=15)
-        right_frame.pack(side="right", fill="both", expand=True, padx=(10, 0))
-        
-        # General advanced settings
-        settings_list = [
-            ("🔄", "Auto-refresh Status", "auto_refresh", "Automatically refresh software status")
-        ]
-        
-        for icon, label, key, desc in settings_list:
-            setting_frame = ttk.Frame(right_frame)
-            setting_frame.pack(fill="x", pady=5)
-            ttk.Label(setting_frame, text=icon, font=("Segoe UI", 9)).pack(side="left", padx=(0, 5))
-            ttk.Label(setting_frame, text=label + ":", font=("Segoe UI", 10, "bold")).pack(side="left")
-            var = tk.BooleanVar(value=self.settings.get(key, True))
-            ttk.Checkbutton(setting_frame, text=desc, variable=var).pack(side="right")
-            setattr(self, f"{key}_var", var)
-        
-        # Save button
-        save_frame = ttk.Frame(main_frame)
-        save_frame.pack(side="bottom", fill="x", pady=(20, 0))
-        ttk.Button(save_frame, text="Save Settings", command=lambda: self._save_settings(show_message=True), 
-                   style="Accent.TButton").pack(side="right")
-    
-    def setup_about(self):
-        # Create main frame with padding
-        main_frame = ttk.Frame(self.tab_about, padding=20)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Left side - App info
-        left_frame = ttk.Frame(main_frame)
-        left_frame.pack(side="left", fill="y", padx=(0, 20))
-        
-        # App logo/icon
-        if os.path.exists("sun_valley_app/assets/icon.ico"):
-            icon = tk.PhotoImage(file="sun_valley_app/assets/icon.ico")
-            icon_label = ttk.Label(left_frame, image=icon)
-            icon_label.image = icon
-            icon_label.pack(pady=(0, 20))
-    
-        
-        # Version
-        version = ttk.Label(left_frame, text="Beta Version 0.0.3a", 
-                          font=("Segoe UI", 12))
-        version.pack(pady=(0, 20))
-        
-        # Description
-        description = ttk.Label(left_frame, text="A comprehensive Windows utility tool\n" +
-                              "for system management and optimization.",
-                              font=("Segoe UI", 10),
-                              justify="center")
-        description.pack(pady=(0, 20))
-        
-        # Copyright
-        copyright_text = ttk.Label(left_frame, text=" 2024 MTech. All rights reserved.",
-                                font=("Segoe UI", 9))
-        copyright_text.pack(pady=(0, 10))
-        
-        # Website link
-        website_frame = ttk.Frame(left_frame)
-        website_frame.pack(pady=(0, 20))
-        
-        website_label = ttk.Label(website_frame, text="Visit our website:",
-                               font=("Segoe UI", 9))
-        website_label.pack(side="left", padx=(0, 5))
-        
-        website_link = ttk.Label(website_frame, text="mtech.glitch.me",
-                              font=("Segoe UI", 9, "underline"),
-                              foreground="blue",
-                              cursor="hand2")
-        website_link.pack(side="left")
-        website_link.bind("<Button-1>", lambda e: webbrowser.open("https://mtech.glitch.me"))
-        
-        # Separator
-        separator = ttk.Separator(main_frame, orient="vertical")
-        separator.pack(side="left", fill="y")
-        
-        # Right side - Features
-        right_frame = ttk.Frame(main_frame)
-        right_frame.pack(side="left", fill="both", expand=True, padx=20)
-        
-        # Features title
-        features_title = ttk.Label(right_frame, text="Key Features",
-                                font=("Segoe UI", 16, "bold"))
-        features_title.pack(pady=(0, 20))
-        
-        # Features list
-        features = [
-            ("System & Performance", "Monitor and optimize system performance"),
-            ("Hardware Information", "View detailed hardware specifications"),
-            ("System Tools", "Essential tools for system maintenance"),
-            ("Auto Install", "Bulk install popular software packages"),
-            ("Auto Unattend", "Create Windows answer files"),
-            ("Real-time Monitoring", "Track CPU, RAM, and disk usage"),
-            ("Dark Theme", "Modern Sun Valley dark theme interface"),
-            ("User-Friendly", "Clean and intuitive design")
-        ]
-        
-        for title, desc in features:
-            feature_frame = ttk.Frame(right_frame)
-            feature_frame.pack(fill="x", pady=5)
+    def open_task_manager(self):
+        success, message = self.sys_tools.open_task_manager()
+        if not success:
+            messagebox.showerror("Error", message)
+
+    def open_control_panel(self):
+        success, message = self.sys_tools.open_control_panel()
+        if not success:
+            messagebox.showerror("Error", message)
+
+    def open_system_settings(self):
+        success, message = self.sys_tools.open_system_settings()
+        if not success:
+            messagebox.showerror("Error", message)
+
+    def open_device_manager(self):
+        success, message = self.sys_tools.open_device_manager()
+        if not success:
+            messagebox.showerror("Error", message)
+
+    def open_disk_cleanup(self):
+        success, message = self.sys_tools.open_disk_cleanup()
+        if not success:
+            messagebox.showerror("Error", message)
+
+    def open_services(self):
+        success, message = self.sys_tools.open_services()
+        if not success:
+            messagebox.showerror("Error", message)
+
+    def update_system_info(self):
+        # Update cleanup info
+        success, cleanup_info = self.sys_tools.get_disk_cleanup_size()
+        if success:
+            temp_size = cleanup_info['temp_size'] / (1024 * 1024)  # Convert to MB
+            recycle_size = cleanup_info['recycle_bin_size'] / (1024 * 1024)  # Convert to MB
+            total_size = cleanup_info['total_size'] / (1024 * 1024)  # Convert to MB
             
-            bullet = ttk.Label(feature_frame, text="•",
-                            font=("Segoe UI", 12, "bold"))
-            bullet.pack(side="left", padx=(0, 10))
+            cleanup_text = f"Potential space to clean:\n"
+            cleanup_text += f"🗑️ Recycle Bin: {recycle_size:.2f} MB\n"
+            cleanup_text += f"📁 Temp Files: {temp_size:.2f} MB\n"
+            cleanup_text += f"💾 Total: {total_size:.2f} MB"
             
-            feature_title = ttk.Label(feature_frame, text=title,
-                                   font=("Segoe UI", 10, "bold"))
-            feature_title.pack(side="left")
+            self.cleanup_label.configure(text=cleanup_text)
+
+        # Schedule next update
+        self.root.after(30000, self.update_system_info)  # Update every 30 seconds
+
+    def update_dashboard_metrics(self, stats):
+        """Update the dashboard metrics with current system stats"""
+        if not stats:
+            return
             
-            feature_desc = ttk.Label(feature_frame, text=f" - {desc}",
-                                  font=("Segoe UI", 10))
-            feature_desc.pack(side="left", padx=(5, 0))
-    
-    def run(self):
-        """Start the application"""
         try:
-            # Initialize monitoring thread
-            self.monitoring = True
-            self.monitoring_thread = threading.Thread(target=self.update_stats, daemon=True)
-            self.monitoring_thread.start()
+            # Update CPU
+            cpu_percent = stats['cpu_percent']
+            cpu_cores = stats['cpu_cores']
+            cpu_freq = stats['cpu_frequency'] / 1000  # Convert MHz to GHz
             
-            # Create system tray icon
-            self.icon = None
-            if os.path.exists("assets/icon.ico"):
-                try:
-                    image = Image.open("assets/icon.ico")
-                    menu = pystray.Menu(
-                        pystray.MenuItem("Show", self._show_window),
-                    )
-                    self.icon = pystray.Icon("MTech WinTool", image, "MTech WinTool", menu)
-                    self.icon_thread = threading.Thread(target=self.icon.run, daemon=True)
-                    self.icon_thread.start()
-                except Exception as e:
-                    print(f"Failed to create tray icon: {str(e)}")
-                    self.icon = None
+            self.dash_cpu_label.configure(text=f"{cpu_percent:.1f}%")
+            self.cpu_label.configure(text=f"{cpu_percent:.1f}%")
+            self.cpu_progress['value'] = cpu_percent
+            self.cpu_details_label.configure(
+                text=f"🔄 Cores: {cpu_cores} | ⚡ Frequency: {cpu_freq:.2f} GHz"
+            )
             
-            # Start the main event loop
-            self.root.mainloop()
+            # Update Memory
+            memory_percent = stats['memory_percent']
+            memory_used = stats['memory_used']
+            memory_total = stats['memory_total']
+            used_gb = memory_used / (1024**3)
+            total_gb = memory_total / (1024**3)
+            available_gb = (memory_total - memory_used) / (1024**3)
+            
+            self.dash_memory_label.configure(text=f"{memory_percent:.1f}%")
+            self.memory_label.configure(text=f"{memory_percent:.1f}%")
+            self.memory_progress['value'] = memory_percent
+            self.memory_details_label.configure(
+                text=f"💾 Total: {total_gb:.1f} GB | 📈 Used: {used_gb:.1f} GB | 📉 Available: {available_gb:.1f} GB"
+            )
+            
+            # Update Disk
+            disk_percent = stats['disk_percent']
+            disk_used = stats['disk_used']
+            disk_total = stats['disk_total']
+            disk_free = stats['disk_free']
+            
+            # Convert to GB and round to 1 decimal place
+            disk_used_gb = round(disk_used / (1024**3), 1)
+            disk_total_gb = round(disk_total / (1024**3), 1)
+            disk_free_gb = round(disk_free / (1024**3), 1)
+            
+            self.dash_disk_label.configure(text=f"{disk_percent:.1f}%")
+            self.disk_label.configure(text=f"{disk_percent:.1f}%")
+            self.disk_progress['value'] = disk_percent
+            self.disk_details_label.configure(
+                text=f"💽 Total: {disk_total_gb} GB | 📈 Used: {disk_used_gb} GB | 📉 Free: {disk_free_gb} GB"
+            )
             
         except Exception as e:
-            print(f"Error running application: {e}")
-            self.cleanup()
-            raise
+            print(f"Error updating dashboard metrics: {e}")
+
+    def update_status(self, message, show_progress=False):
+        """Update the status bar message and progress indicator"""
+        self.status_queue.put(("status", message))
+        if show_progress:
+            self.status_queue.put(("show_progress", None))
+        else:
+            self.status_queue.put(("hide_progress", None))
+
+    def check_status_updates(self):
+        """Check and process any pending status updates"""
+        try:
+            while True:
+                action, data = self.status_queue.get_nowait()
+                if action == "status":
+                    self.status_label.configure(text=data)
+                elif action == "show_progress":
+                    self.progress_bar.pack(side=tk.RIGHT, padx=(0, 10))
+                    self.progress_bar.start(10)
+                elif action == "hide_progress":
+                    self.progress_bar.stop()
+                    self.progress_bar.pack_forget()
+                elif action == "populate_initial":
+                    self.filter_packages()
+                elif action == "update_package":
+                    package_name, is_installed, needs_updating = data
+                    self.pkg_ops.installation_status[package_name] = is_installed
+                    self.pkg_ops.update_status_dict[package_name] = needs_updating
+                    self.filter_packages()
+        except queue.Empty:
+            pass
         finally:
-            self.cleanup()
+            self.root.after(100, self.check_status_updates)
 
-    def cleanup(self):
-        """Clean up resources before exit"""
+    def get_selected_package(self):
+        selection = self.tree.selection()
+        if not selection:
+            return None
+            
+        item = self.tree.item(selection[0])
+        if not item:
+            return None
+            
+        # If a category is selected, return None
+        parent = self.tree.parent(selection[0])
+        if not parent:
+            return None
+            
+        return item['text']
+
+    def install_package(self):
+        package_name = self.get_selected_package()
+        if not package_name:
+            messagebox.showwarning("No Package Selected", "Please select a package to install.")
+            return
+            
+        if self.pkg_ops.installation_status.get(package_name, False):
+            messagebox.showinfo("Already Installed", f"{package_name} is already installed.")
+            return
+            
+        threading.Thread(target=self.pkg_ops.install_package, args=(package_name, self.update_status), daemon=True).start()
+
+    def uninstall_package(self):
+        package_name = self.get_selected_package()
+        if not package_name:
+            messagebox.showwarning("No Package Selected", "Please select a package to uninstall.")
+            return
+            
+        if not self.pkg_ops.installation_status.get(package_name, False):
+            messagebox.showinfo("Not Installed", f"{package_name} is not installed.")
+            return
+            
+        if messagebox.askyesno("Confirm Uninstall", f"Are you sure you want to uninstall {package_name}?"):
+            threading.Thread(target=self.pkg_ops.uninstall_package, args=(package_name, self.update_status), daemon=True).start()
+
+    def update_package(self):
+        package_name = self.get_selected_package()
+        if not package_name:
+            messagebox.showwarning("No Package Selected", "Please select a package to update.")
+            return
+            
+        if not self.pkg_ops.installation_status.get(package_name, False):
+            messagebox.showinfo("Not Installed", f"{package_name} is not installed.")
+            return
+            
+        if not self.pkg_ops.update_status_dict.get(package_name, False):
+            messagebox.showinfo("No Update Available", f"{package_name} is already up to date.")
+            return
+            
+        threading.Thread(target=self.pkg_ops.update_package, args=(package_name, self.update_status), daemon=True).start()
+
+    def refresh_packages(self):
+        """Refresh the package list"""
+        self.pkg_ops.refresh_packages(self.update_status, self.status_queue)
+        
+        # Update category dropdown with available categories
+        categories = list(self.pkg_ops.categories.keys())
+        categories.sort()
+        categories.insert(0, "All")
+        self.category_dropdown['values'] = categories
+
+    def on_category_open(self, event):
+        item = self.tree.selection()[0]
+        self.tree.item(item, open=True)
+
+    def on_category_close(self, event):
+        item = self.tree.selection()[0]
+        self.tree.item(item, open=False)
+
+    def on_item_double_click(self, event):
+        package_name = self.get_selected_package()
+        if package_name:
+            if not self.pkg_ops.installation_status.get(package_name, False):
+                self.install_package()
+            elif self.pkg_ops.update_status_dict.get(package_name, False):
+                self.update_package()
+
+    def process_queue(self):
         try:
-            # Stop monitoring
-            self.monitoring = False
-            
-            # Remove tray icon if it exists
-            if hasattr(self, 'tray_icon'):
-                self.tray_icon.stop()
-                
-            # Destroy main window
-            if self.root:
-                self.root.destroy()
-                
-        except:
-            # If anything fails, still force exit
-            os._exit(0)
+            while True:
+                action, data = self.status_queue.get_nowait()
+                if action == "status":
+                    self.status_label.configure(text=data)
+                elif action == "show_progress":
+                    self.progress_bar.pack(side=tk.RIGHT, padx=(0, 10))
+                    self.progress_bar.start(10)
+                elif action == "hide_progress":
+                    self.progress_bar.stop()
+                    self.progress_bar.pack_forget()
+                elif action == "populate_initial":
+                    self.filter_packages()
+                elif action == "update_package":
+                    package_name, is_installed, needs_updating = data
+                    self.pkg_ops.installation_status[package_name] = is_installed
+                    self.pkg_ops.update_status_dict[package_name] = needs_updating
+                    self.filter_packages()
+        except queue.Empty:
+            pass
+        finally:
+            self.root.after(100, self.process_queue)
 
-    def _show_window(self, icon, item):
-        """Show the main window from system tray"""
-        icon.stop()
-        self.root.after(0, self.root.deiconify)
-
-    def _quit_app(self, icon, item):
-        """Quit the application from system tray"""
-        icon.stop()
-        self.cleanup()
-
-    def _on_closing(self, event=None):
-        """Legacy close handler for protocol"""
-        self.cleanup()
-        
-    def _on_close_button(self):
-        """Handle window close button click"""
-        self.cleanup()
-        self.root.quit()
-
-    def _on_map(self, event):
-        if event.widget is self.root:
-            self.root.deiconify()
-            self.minimized = False
-        
-    def _on_unmap(self, event):
-        if event.widget is self.root and not self.minimized:
-            self.minimized = True
-            self.root.withdraw()
-            
-    def minimize_window(self):
-        """Minimize window to tray with first-time notification"""
-        if not self.minimized:
-            if self.settings.get("show_minimize_message", True):
-                result = messagebox.showinfo(
-                    "Minimized to Tray",
-                    "MTech WinTool will continue running in the system tray.\n" +
-                    "Click the tray icon to restore the window.\n\n" +
-                    "This message won't show again.",
-                    icon="info"
-                )
-                self.settings["show_minimize_message"] = False
-                self._save_settings()
-            
-            self.root.withdraw()
-            self.minimized = True
-    
-    def _setup_tray(self):
-        # Create tray icon menu
-        menu = (
-            pystray.MenuItem('Open', self._show_window),
+    def save_unattend(self):
+        self.update_unattend_settings()
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xml",
+            filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
+            title="Save Unattend File"
         )
-        
-        try:
-            # Try to load the icon
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
-            if os.path.exists(icon_path):
-                icon_image = Image.open(icon_path)
+        if file_path:
+            success, message = self.unattend_creator.save_unattend_file(file_path)
+            if success:
+                messagebox.showinfo("Success", message)
             else:
-                # Create a default icon (16x16 black square)
-                icon_image = Image.new('RGB', (16, 16), 'black')
-            
-            # Create the icon
-            self.icon = pystray.Icon(
-                "MTechWinTool",
-                icon_image,
-                "MTech WinTool",
-                menu
-            )
-            
-            # Start the icon
-            self.icon.run_detached()
-        except Exception as e:
-            print(f"Failed to create tray icon: {str(e)}")
-            self.icon = None
-    
-    def _load_settings(self):
-        """Load application settings from settings.json"""
-        app_data = os.getenv('LOCALAPPDATA')  # Changed from APPDATA to LOCALAPPDATA
-        app_folder = os.path.join(app_data, 'MTechWinTool')
-        os.makedirs(app_folder, exist_ok=True)
-        self.settings_file = os.path.join(app_folder, "settings.json")
-        self.settings = {
-            "auto_refresh": True,           # Auto refresh software status
-            "start_with_windows": False,     # Don't start with Windows by default
-            "show_minimize_message": True   # Show minimize message by default
-        }
-        
-        try:
-            if os.path.exists(self.settings_file):
-                with open(self.settings_file, 'r') as f:
-                    loaded_settings = json.load(f)
-                    self.settings.update(loaded_settings)
-        except Exception as e:
-            print(f"Error loading settings: {str(e)}")
+                messagebox.showerror("Error", message)
 
-    def _save_settings(self, show_message=False):
-        """Save settings to file"""
-        try:
-            # Update settings from UI variables
-            self.settings.update({
-                "auto_refresh": self.auto_refresh_var.get(),
-                "start_with_windows": self.startup_var.get()
-            })
-            
-            # Save to file
-            with open(self.settings_file, 'w') as f:
-                json.dump(self.settings, f, indent=4)
-                
-            # Apply startup setting
-            self._apply_startup_setting()
-                
-            if show_message:
-                messagebox.showinfo("Success", "Settings saved successfully!")
-        except Exception as e:
-            if show_message:
-                messagebox.showerror("Error", f"Failed to save settings: {str(e)}")
+    def update_unattend_settings(self):
+        # Get the language code from the display name
+        language_dict = UnattendCreator.get_available_languages()
+        selected_language = self.language.get()
+        language_code = next(code for code, name in language_dict.items() if name == selected_language)
 
-    def _apply_startup_setting(self):
-        """Apply the startup with Windows setting"""
-        try:
-            import winreg
-            startup_key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Run",
-                0,
-                winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE
-            )
-            
-            app_path = os.path.abspath(sys.argv[0])
-            key_name = "MTechWinTool"
-            
-            try:
-                if self.settings["start_with_windows"]:
-                    winreg.SetValueEx(startup_key, key_name, 0, winreg.REG_SZ, f'"{app_path}"')
-                else:
-                    winreg.DeleteValue(startup_key, key_name)
-            except WindowsError as e:
-                if e.winerror != 2:  # Ignore "not found" error when trying to delete
-                    raise
-            finally:
-                winreg.CloseKey(startup_key)
-        except Exception as e:
-            print(f"Error applying startup setting: {str(e)}")
-    
-    def _init_wmi(self):
-        try:
-            # Initialize WMI connections
-            self.wmi = wmi.WMI()
-            
-            # Initialize monitoring variables
-            self.cpu_temps = []
-            self.gpu_temps = []
-            
-        except Exception as e:
-            messagebox.showwarning(
-                "WMI Error",
-                "Failed to initialize WMI monitoring.\n" +
-                "System monitoring features may be limited.\n" +
-                f"Error: {str(e)}"
-            )
-    
-    def show_context_menu(self, event):
-        """Show context menu on right-click"""
-        item = self.software_tree.identify_row(event.y)
-        if item and self.software_tree.parent(item):  # Only show menu for software items, not categories
-            self.software_tree.selection_set(item)
-            self.context_menu.post(event.x_root, event.y_root)
-            
-    def uninstall_selected_software(self):
-        """Uninstall selected software using winget"""
-        selected = self.software_tree.selection()
-        if not selected:
-            messagebox.showinfo("Select Software", "Please select software to uninstall")
-            return
+        # Get the keyboard layout code from the display name
+        keyboard_dict = UnattendCreator.get_keyboard_layouts()
+        selected_layout = self.keyboard_layout.get()
+        keyboard_code = next(code for code, name in keyboard_dict.items() if name == selected_layout)
 
-        # Get software info
-        item = selected[0]
-        values = self.software_tree.item(item).get("values", [])
-        
-        # Skip if it's a category (no values) or not enough values
-        if not values:
-            return
+        self.unattend_creator.settings.update({
+            # System Settings
+            'computer_name': self.computer_name.get(),
+            'organization': self.organization.get(),
+            'owner': self.owner.get(),
+            'product_key': self.product_key.get(),
+            'windows_edition': self.windows_edition.get(),
             
-        software_name = values[0]
-        
-        # Find software ID
-        software_id = None
-        for category, software_dict in self.SOFTWARE_CATEGORIES.items():
-            if software_name in software_dict:
-                software_id = software_dict[software_name]['id']
-                break
-                
-        if not software_id:
-            return
+            # Regional Settings
+            'timezone': self.timezone.get(),
+            'language': language_code,
+            'input_locale': language_code,
+            'system_locale': language_code,
+            'user_locale': language_code,
+            'keyboard_layout': keyboard_code,
             
-        # Confirm uninstallation
-        if not messagebox.askyesno("Confirm Uninstall", 
-                                 f"Are you sure you want to uninstall {software_name}?"):
-            return
+            # User Account Settings
+            'user_account': self.username.get(),
+            'user_password': self.password.get(),
+            'user_account_type': self.account_type.get(),
+            'auto_logon': self.auto_logon.get(),
+            'auto_logon_count': int(self.auto_logon_count.get()),
+            'disable_admin_account': self.disable_admin.get(),
+            'enable_guest_account': self.enable_guest.get(),
             
-        # Create progress window
-        progress_window = Toplevel(self.root)
-        progress_window.title("Uninstalling Software")
-        progress_window.geometry("400x150")
+            # Privacy Settings
+            'disable_telemetry': self.disable_telemetry.get(),
+            'disable_cortana': self.disable_cortana.get(),
+            'disable_consumer_features': self.disable_consumer.get(),
+            'disable_windows_tips': self.disable_tips.get(),
+            'disable_app_suggestions': self.disable_suggestions.get(),
+            
+            # App Settings
+            'remove_inbox_apps': self.remove_inbox.get(),
+            'install_winget': self.install_winget.get(),
+            'install_chocolatey': self.install_chocolatey.get(),
+            'install_office': self.install_office.get(),
+            'office_edition': self.office_edition.get()
+        })
+
+    def create_scrollable_frame(self, parent):
+        # Create a canvas and scrollbar
+        canvas = tk.Canvas(parent)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Configure canvas scrolling with mouse wheel
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
-        # Center the window
-        progress_window.transient(self.root)
-        progress_window.grab_set()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 150) // 2
-        progress_window.geometry(f"+{x}+{y}")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Bind mouse enter/leave events to manage mousewheel scrolling
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
         
-        # Add progress elements
-        frame = ttk.Frame(progress_window, padding="20")
-        frame.pack(fill='both', expand=True)
+        def _unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
         
-        status_label = ttk.Label(frame, text=f"Uninstalling {software_name}...", wraplength=350)
-        status_label.pack(fill='x', pady=(0, 10))
+        canvas.bind('<Enter>', _bind_mousewheel)
+        canvas.bind('<Leave>', _unbind_mousewheel)
+
+        # Pack the canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        return scrollable_frame
+
+    def setup_dashboard_tab(self):
+        dashboard_tab = ttk.Frame(self.notebook, padding="20 10 20 10", style="Dashboard.TFrame")
+        self.notebook.add(dashboard_tab, text=" 🏠 Dashboard ")
+        self.notebook.select(0)  # Make dashboard the default tab
+
+        # Welcome header with gradient-like effect
+        header_frame = ttk.Frame(dashboard_tab, style="Header.TFrame")
+        header_frame.pack(fill=tk.X, pady=(0, 20))
         
-        progress_bar = ttk.Progressbar(frame, mode='indeterminate', length=350)
-        progress_bar.pack(fill='x', pady=(0, 10))
-        progress_bar.start(10)
+        title_frame = ttk.Frame(header_frame)
+        title_frame.pack(side=tk.LEFT)
         
-        def uninstall_software():
-            try:
-                # Run winget uninstall with silent mode
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        title_label = ttk.Label(title_frame, text="Welcome to MTech WinTool", style="DashboardTitle.TLabel")
+        title_label.pack(anchor="w")
+        subtitle_label = ttk.Label(title_frame, text="Your Windows System Management Hub", style="DashboardSubtitle.TLabel")
+        subtitle_label.pack(anchor="w")
+
+        # Create main content frame with grid layout
+        content_frame = ttk.Frame(dashboard_tab)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        for i in range(2):
+            content_frame.grid_columnconfigure(i, weight=1)
+        content_frame.grid_rowconfigure(1, weight=1)
+
+        # System Health Card with modern metrics
+        health_frame = ttk.LabelFrame(content_frame, text="💻 System Health", padding=15, style="DashboardCard.TFrame")
+        health_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+
+        # CPU Usage with progress ring
+        cpu_frame = ttk.Frame(health_frame)
+        cpu_frame.pack(fill=tk.X, pady=5)
+        
+        self.dash_cpu_label = ttk.Label(cpu_frame, text="0%", style="DashboardMetric.TLabel")
+        self.dash_cpu_label.pack(side=tk.LEFT)
+        
+        cpu_info_frame = ttk.Frame(cpu_frame)
+        cpu_info_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(cpu_info_frame, text="CPU Usage", style="DashboardText.TLabel").pack(anchor="w")
+        self.cpu_details_label = ttk.Label(cpu_info_frame, text="", style="DashboardSubtext.TLabel")
+        self.cpu_details_label.pack(anchor="w")
+
+        ttk.Separator(health_frame, orient="horizontal").pack(fill=tk.X, pady=10)
+
+        # Memory Usage with visual bar
+        memory_frame = ttk.Frame(health_frame)
+        memory_frame.pack(fill=tk.X, pady=5)
+        
+        self.dash_memory_label = ttk.Label(memory_frame, text="0%", style="DashboardMetric.TLabel")
+        self.dash_memory_label.pack(side=tk.LEFT)
+        
+        memory_info_frame = ttk.Frame(memory_frame)
+        memory_info_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(memory_info_frame, text="Memory Usage", style="DashboardText.TLabel").pack(anchor="w")
+        self.memory_details_label = ttk.Label(memory_info_frame, text="", style="DashboardSubtext.TLabel")
+        self.memory_details_label.pack(anchor="w")
+
+        ttk.Separator(health_frame, orient="horizontal").pack(fill=tk.X, pady=10)
+
+        # Disk Usage
+        disk_frame = ttk.Frame(health_frame)
+        disk_frame.pack(fill=tk.X, pady=5)
+        
+        self.dash_disk_label = ttk.Label(disk_frame, text="0%", style="DashboardMetric.TLabel")
+        self.dash_disk_label.pack(side=tk.LEFT)
+        
+        disk_info_frame = ttk.Frame(disk_frame)
+        disk_info_frame.pack(side=tk.LEFT, padx=10)
+        ttk.Label(disk_info_frame, text="Disk Activity", style="DashboardText.TLabel").pack(anchor="w")
+        self.disk_details_label = ttk.Label(disk_info_frame, text="", style="DashboardSubtext.TLabel")
+        self.disk_details_label.pack(anchor="w")
+
+        # Quick Actions Card with modern buttons
+        actions_frame = ttk.LabelFrame(content_frame, text="⚡ Quick Actions", padding=15, style="DashboardCard.TFrame")
+        actions_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
+
+        # Action buttons with icons and descriptions
+        self.create_action_button(actions_frame, "🧹 System Cleanup", 
+                                "Clean temporary files and free up space", 
+                                self.open_disk_cleanup)
+        
+        self.create_action_button(actions_frame, "🔄 Update Check", 
+                                "Check for system and package updates", 
+                                self.refresh_packages)
+        
+        self.create_action_button(actions_frame, "⚙️ System Settings", 
+                                "Configure system preferences", 
+                                self.open_system_settings)
+        
+        self.create_action_button(actions_frame, "🛡️ Task Manager", 
+                                "Monitor system performance and tasks", 
+                                self.open_task_manager)
+
+        # Recent Activity Card with improved styling
+        activity_frame = ttk.LabelFrame(content_frame, text="📋 Recent Activity", padding=15, style="DashboardCard.TFrame")
+        activity_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="nsew")
+
+        # Activity list with custom styling
+        self.activity_text = tk.Text(activity_frame, height=8, wrap=tk.WORD, font=("Segoe UI", 10))
+        self.activity_text.pack(fill=tk.BOTH, expand=True)
+        self.activity_text.tag_configure("timestamp", foreground="#666666")
+        self.activity_text.tag_configure("message", foreground="#000000")
+        self.activity_text.insert(tk.END, "Welcome to MTech WinTool!\n")
+        self.activity_text.config(state=tk.DISABLED)
+
+    def create_action_button(self, parent, text, description, command):
+        """Create a modern action button with description"""
+        button_frame = ttk.Frame(parent)
+        button_frame.pack(fill=tk.X, pady=5)
+        
+        btn = ttk.Button(button_frame, text=text, command=command, style="DashboardAction.TButton")
+        btn.pack(fill=tk.X)
+        
+        desc_label = ttk.Label(button_frame, text=description, style="DashboardSubtext.TLabel")
+        desc_label.pack(fill=tk.X)
+
+    def add_activity(self, message):
+        """Add a new activity message to the dashboard with timestamp"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.activity_text.config(state=tk.NORMAL)
+        self.activity_text.insert(1.0, f"[{timestamp}] {message}\n")
+        self.activity_text.config(state=tk.DISABLED)
+
+    def update_stats(self):
+        total_packages = sum(len(packages) for packages in self.pkg_ops.categories.values())
+        total_categories = len(self.pkg_ops.categories)
+        self.stats_label.configure(text=f" 📦 {total_packages} WinGet Packages in {total_categories} Categories")
+        
+    def filter_packages(self, *args):
+        search_term = self.search_var.get().lower()
+        selected_category = self.category_var.get()
+        self.tree.delete(*self.tree.get_children())
+        
+        for category, packages in self.pkg_ops.categories.items():
+            # Skip if a specific category is selected and this isn't it
+            if selected_category != "All" and category != selected_category:
+                continue
                 
-                result = subprocess.run(
-                    ["winget", "uninstall", "--silent", "--id", software_id, "--accept-source-agreements"],
-                    capture_output=True,
-                    text=True,
-                    startupinfo=startupinfo,
-                    timeout=180  # 3 minute timeout
-                )
-                
-                if result.returncode == 0:
-                    # Update status and UI
-                    self.update_software_status(software_name, False)
-                    status_label.config(text=f"Successfully uninstalled {software_name}")
-                    print(f"Successfully uninstalled {software_name}")
-                else:
-                    error_msg = f"Failed to uninstall {software_name}. Error: {result.stderr}"
-                    status_label.config(text=error_msg)
-                    print(error_msg)
-                    messagebox.showerror("Uninstallation Error", error_msg)
-            except subprocess.TimeoutExpired:
-                error_msg = f"Uninstallation of {software_name} timed out after 3 minutes"
-                status_label.config(text=error_msg)
-                print(error_msg)
-                messagebox.showerror("Uninstallation Error", error_msg)
-            except Exception as e:
-                error_msg = f"Error uninstalling {software_name}: {str(e)}"
-                status_label.config(text=error_msg)
-                print(error_msg)
-                messagebox.showerror("Uninstallation Error", error_msg)
-            finally:
-                # Stop progress and close window
-                progress_bar.stop()
-                progress_window.after(1500, progress_window.destroy)
+            category_visible = False
+            category_id = self.tree.insert('', 'end', text=category)
+            
+            for package_name in packages:
+                if search_term in package_name.lower() or search_term in self.pkg_ops.get_package_info(package_name).get('description', '').lower():
+                    package_data = self.pkg_ops.get_package_info(package_name)
+                    description = package_data.get('description', '')
+                    
+                    is_installed = self.pkg_ops.installation_status.get(package_name, False)
+                    needs_update = self.pkg_ops.update_status_dict.get(package_name, False)
+                    
+                    if needs_update:
+                        status = "Update Available"
+                        tag = 'needs_update'
+                    elif is_installed:
+                        status = "Updated"
+                        tag = 'installed'
+                    else:
+                        status = "Not Installed"
+                        tag = 'not_installed'
+                    
+                    self.tree.insert(category_id, 'end', text=package_name, values=(status, description), tags=(tag,))
+                    category_visible = True
+            
+            if not category_visible:
+                self.tree.delete(category_id)
+            else:
+                # Open the category by default
+                self.tree.item(category_id, open=True)
+        
+        self.update_stats()
+
+    def initial_package_load(self):
+        """Initial load of packages and update UI"""
+        self.pkg_ops.load_packages_async(self.update_status, self.status_queue)
+        self.root.after(100, self.check_and_update_categories)
     
+    def check_and_update_categories(self):
+        """Check if categories are loaded and update dropdown"""
+        if self.pkg_ops.categories:
+            categories = list(self.pkg_ops.categories.keys())
+            categories.sort()
+            categories.insert(0, "All")
+            self.category_dropdown['values'] = categories
+            self.filter_packages()
+        else:
+            # Check again in 100ms
+            self.root.after(100, self.check_and_update_categories)
+
+    def run(self):
+        self.root.mainloop()
+
 if __name__ == "__main__":
-    # First check if winget is installed
-    try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        result = subprocess.run(['winget', '--version'], capture_output=True, text=True, startupinfo=startupinfo)
-        winget_installed = result.returncode == 0
-    except:
-        winget_installed = False
-
-    # Use context manager for single instance check
-    with SingleInstance("MTechWinTool_Instance") as running:
-        if not running:
-            messagebox.showwarning("Already Running", "MTech WinTool is already running!")
-            sys.exit(0)
-        
-        # Only show initialization UI if winget is not installed
-        if not winget_installed:
-            init = InitializationUI()
-            if not init.run():
-                sys.exit(1)  # Exit if initialization failed
-        
-        try:
-            # Start main app
-            app = MTechWinTool()
-            app.run()
-        except Exception as e:
-            print(f"Error: {str(e)}")
-            sys.exit(1)
+    root = tk.Tk()
+    winget_installer = WinGetInstaller(root)
+    winget_installer.run()

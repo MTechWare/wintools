@@ -1,138 +1,166 @@
 <div align="center">
 
-# MTech WinTool | Beta 0.0.3a
+# 🛠️ MTech WinTool Beta Version 0.0.4a
 
-**A powerful Windows utility that puts you in control. Monitor your system, manage software, and optimize performance - all with a beautiful, modern interface.**
+[![Python](https://img.shields.io/badge/Python-3.7+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+[![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=for-the-badge)](https://github.com/yourusername/MTechWinTool)
 
-*Crafted with Python and Tkinter, featuring the stunning Sun Valley theme for a native Windows 11 look.*
+<img src="screenshot.png" alt="MTech WinTool Screenshot" width="800"/>
+
+### 🎯 A Modern Windows System Management Suite
+
+*Streamline your Windows experience with an elegant, all-in-one system management tool.*
+
+[Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Requirements](#-requirements)
+
+---
 
 </div>
 
-## 🚀 Quick Start
+## 📋 Requirements
 
-### One-Click Install (PowerShell)
+### System Requirements
+- Windows 10/11
+- 4GB RAM (minimum)
+- 15MB free disk space
+
+## 🚀 Installation
+
+### Option 1: Direct Download (Recommended)
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.3a/MTechWinTool.exe -OutFile MTechWinTool.exe; Start-Process .\MTechWinTool.exe
+# Download and run using PowerShell
+Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.3a/MTechWinTool.exe -OutFile MTechWinTool.exe
+Start-Process .\MTechWinTool.exe
 ```
 
-### Manual Download
+### Option 2: From Releases
+1. Visit our [Releases Page](https://github.com/MTechWare/wintools/releases)
+2. Download the latest version of `MTechWinTool.exe`
+3. Run the executable to start the application
 
-Download the latest release from [GitHub Releases](https://github.com/MTechWare/wintools/releases) and run the executable.
+### Option 3: Build from Source
+```bash
+# Clone the repository
+git clone https://github.com/MTechWare/wintools.git
 
-## 🔧 Requirements
+# Navigate to directory
+cd wintools
 
-- Windows 10/11
-- Python 3.11+ (for building from source)
-- Winget package manager (auto-installed if not present)
-- Administrator privileges (for some features)
-
-## 💡 Pro Tips
-- right-click uninstallation of a package
-- Use system tray to keep the tool running in background
-- Use category filters to find software quickly
-- Keep the tool updated for best performance
+# Install dependencies
+run the install.cmd file
+# Run the application
+python main.py
+```
 
 ## ✨ Features
 
-### 🛠️ Winget Feature
-- Automatic winget installation if not present
-- Smart package detection shows already installed software
-- Real-time status tracking of installed/uninstalled packages
-- Batch processing for faster package checks
-- Silent installation support
-- Seamless integration with Windows Package Manager
+<details open>
+<summary><b>🏠 Dashboard</b></summary>
 
-### 💻 System Management
-- Real-time CPU, Memory, and Disk monitoring
-- Detailed hardware information
-- System optimization tools
-- Windows unattended installation configuration
+- **Real-time System Monitoring**
+  - CPU, Memory, and Disk usage tracking
+  - Performance metrics visualization
+  - Activity timeline
+- **Quick Actions Hub**
+  - Common system tasks
+  - Frequently used tools
+  - System shortcuts
+</details>
 
-### 📦 Software Management
-- One-click software installation via winget
-- Pre-configured software categories
-  - Browsers (Chrome, Firefox, Opera)
-  - Development Tools (VS Code, Git, Python)
-  - Code Editors (IntelliJ, PyCharm, Sublime)
-  - Utilities (7-Zip, VLC, Notepad++)
+<details>
+<summary><b>📦 Package Management</b></summary>
 
-### 🎨 Modern UI
-- Sleek Sun Valley theme
-- Dark mode
-- System tray integration
-- Real-time status updates
+- **WinGet Integration**
+  - Smart package search
+  - Category-based filtering
+  - Bulk operations support
+- **Package Operations**
+  - One-click installation
+  - Clean uninstallation
+  - Automatic updates
+</details>
 
-## 📸 Screenshots
+<details>
+<summary><b>💻 System Tools</b></summary>
 
-<div align="center">
+- **System Maintenance**
+  - Disk cleanup utility
+  - Task manager integration
+  - Service management
+- **System Configuration**
+  - Device manager
+  - Control panel
+  - System settings
+</details>
 
-| System Monitoring | Software Installation |
-|:---:|:---:|
-| ![System](screenshots/wintool_System.png) | ![Install](screenshots/wintool_Install.png) |
-| *Real-time system monitoring* | *Easy software installation* |
+<details>
+<summary><b>🔧 System Health</b></summary>
 
-| Hardware Information | Windows Configuration |
-|:---:|:---:|
-| ![Hardware](screenshots/wintool_Hardware.png) | ![Config](screenshots/wintool_Unattend.png) |
-| *Hardware monitoring* | *Windows configuration* |
+- **Performance Monitoring**
+  - Resource usage tracking
+  - System metrics
+  - Health diagnostics
+- **System Information**
+  - Hardware details
+  - Software inventory
+  - System reports
+</details>
 
-</div>
+<details>
+<summary><b>⚙️ Unattended Setup</b></summary>
 
-## 🆕 What's New in Beta 0.0.3a
+- **Windows Configuration**
+  - Custom installation settings
+  - System preferences
+  - Deployment templates
+- **Automation**
+  - Scripted setup
+  - Configuration profiles
+  - Batch processing
+</details>
 
-### ✨ New Features
-- Added Settings tab for better customization
-- Enhanced minimize to tray with first-time notification
-- Improved settings persistence
+## 🎨 Themes & Design
 
-### 🔧 Improvements
-- Major optimization in software status checking
-- Silent mode for software operations
-- Better timeout handling
-- Smaller executable size when building from source
+- **Modern Interface**
+  - Sun Valley dark theme
+  - Orange accent colors
+  - Professional aesthetics
 
-### 🐛 Bug Fixes
-- Fixed software status refresh performance
-- Enhanced thread safety in UI updates
-- Improved error handling
+- **Responsive Design**
+  - Adaptive layout
+  - Smooth animations
+  - Intuitive controls
 
-## 🛠️ Building from Source
+## 🎯 Usage
 
-1. Clone the repository
+1. **Launch Dashboard**
    ```bash
-   git clone https://github.com/MTechWare/wintools.git
+   python main.py
    ```
 
-2. Install dependencies
-   ```bash
-   install.cmd
-   ```
+2. **Navigate Features**
+   - Use the sidebar for main navigation
+   - Access quick actions from the dashboard
+   - Monitor system health in real-time
 
-3. Build executable
-   ```bash
-   Build.cmd
-   ```
+3. **Package Management**
+   - Search packages using the smart search bar
+   - Filter by categories or tags
+   - Perform bulk operations with ease
 
-## 📝 License
+## 🤝 Credits
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🤝 Contributing
-
-Feel free to:
-- Report issues
-- Suggest features
-- Submit pull requests
-
-## 📫 Contact
-
-- GitHub Issues: [Report a bug](https://github.com/MTechWare/wintools/issues)
+- **UI Framework**: Sun-Valley-ttk-theme
+- **Package Management**: Windows Package Manager (winget)
+- **System Monitoring**: psutil library
 
 ---
 
 <div align="center">
 
-Made with ❤️ by MTechWare
+Made with ❤️ by MTech
 
 </div>

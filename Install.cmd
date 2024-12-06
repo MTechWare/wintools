@@ -39,9 +39,16 @@ echo Installing required packages...
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-:: Create Start Menu shortcut
-echo Creating Start Menu shortcut...
-powershell "$s=(New-Object -COM WScript.Shell).CreateShortcut('%appdata%\Microsoft\Windows\Start Menu\Programs\MTech WinTool.lnk');$s.TargetPath='%~dp0dist\MTechWinTool\MTechWinTool.exe';$s.Save()"
+:: Create directory if it doesn't exist
+if not exist "%ProgramFiles%\MTech WinTool" mkdir "%ProgramFiles%\MTech WinTool"
 
-echo Installation complete! You can find MTech WinTool in your Start Menu.
+:: Copy files
+copy /Y "dist\MTech_WinTool.exe" "%ProgramFiles%\MTech WinTool"
+copy /Y "icon.ico" "%ProgramFiles%\MTech WinTool"
+
+:: Create shortcut on desktop
+powershell "$WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%USERPROFILE%\Desktop\MTech WinTool.lnk'); $Shortcut.TargetPath = '%ProgramFiles%\MTech WinTool\MTech_WinTool.exe'; $Shortcut.IconLocation = '%ProgramFiles%\MTech WinTool\icon.ico'; $Shortcut.Save()"
+
+echo Installation complete!
+echo A shortcut has been created on your desktop.
 pause
