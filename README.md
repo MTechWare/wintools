@@ -1,7 +1,7 @@
 <div align="center">
 
-  <img src="https://cdn.glitch.global/c71b63a5-9bbb-4161-9304-824cf8b9757b/WinTool.png?v=1733618534018" width="400"/>
-# 🛠️ MTech WinTool Beta Version 0.0.4a
+<img src="[image](https://cdn.glitch.global/c71b63a5-9bbb-4161-9304-824cf8b9757b/WinTool.png?v=1733618534018)" width="400" height="300"/>
+🛠️ MTech WinTool Beta Version 0.0.4a
 
 [![Python](https://img.shields.io/badge/Python-3.7+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
