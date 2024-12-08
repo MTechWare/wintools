@@ -1,10 +1,5 @@
 <div align="center">
 
-<div align="center">
-  <h1>
-    <img src="https://readme-typing-svg.herokuapp.com?font=Segoe+UI&weight=700&size=72&duration=1&pause=1000&color=FF9800&center=true&vCenter=true&repeat=false&width=200&height=90&lines=WinTool" alt="WinTool" />
-  </h1>
-</div>
 # 🛠️ MTech WinTool Beta Version 0.0.4a
 
 [![Python](https://img.shields.io/badge/Python-3.7+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
