@@ -1,7 +1,7 @@
 <div align="center">
 
 <p align="center">
-<img src="WinTool.png" alt="MTech WinTool Screenshot" width="300" height="250"/>
+<img src="WinTool.png" alt="MTech WinTool Screenshot" width="300" height="150"/>
 </p>
 # 🛠️ MTech WinTool Beta Version 0.0.4a
 
