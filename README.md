@@ -1,8 +1,6 @@
 <div align="center">
 
-<p align="center">
-<img src="WinTool.png" alt="MTech WinTool Screenshot" width="350" height="250"/>
-</p>
+<h1 style="text-align: center; font-size: 72px; background: linear-gradient(45deg, #ff9800, #ff5722); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: bold;">WinTool</h1>
 # 🛠️ MTech WinTool Beta Version 0.0.4a
 
 [![Python](https://img.shields.io/badge/Python-3.7+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
