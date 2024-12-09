@@ -4,6 +4,34 @@ import json
 import threading
 import queue
 import logging
+import os
+import time
+
+# Configure logging
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create file handler
+log_file = os.path.join('logs', 'mtech_wintool.log')
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.INFO)
+
+# Create console handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+# Create formatter
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Add handlers to logger if they haven't been added already
+if not logger.handlers:
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
 
 class PackageOperations:
     def __init__(self):
@@ -12,6 +40,9 @@ class PackageOperations:
         self.installation_status = {}
         self.update_status_dict = {}
         self.status_queue = None
+        self.install_queue = queue.Queue()
+        self.install_thread = None
+        self.installing = False
         # Create startupinfo to hide windows
         self.startupinfo = subprocess.STARTUPINFO()
         self.startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -65,6 +96,7 @@ class PackageOperations:
                 callback("Ready")
             
         except Exception as e:
+            logger.error(f"Failed to load packages: {str(e)}", exc_info=True)
             if callback:
                 callback(f"Failed to load packages: {str(e)}")
 
@@ -77,7 +109,8 @@ class PackageOperations:
                 startupinfo=self.startupinfo
             )
             return process.stdout.lower()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get installed software list: {str(e)}", exc_info=True)
             return ""
 
     def get_winget_updates(self):
@@ -106,11 +139,13 @@ class PackageOperations:
                             updates.add(parts[1])  # Add ID to updates set
             
             return updates
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to get winget updates: {str(e)}", exc_info=True)
             return set()
 
     def check_software_installed(self, package_name, installed_software=""):
         if package_name not in self.packages_data:
+            logger.warning(f"Package {package_name} not found in packages data")
             return False
             
         try:
@@ -132,11 +167,12 @@ class PackageOperations:
             return False
             
         except Exception as e:
-            print(f"Error checking software status for {package_name}: {e}")
+            logger.error(f"Error checking software status for {package_name}: {str(e)}", exc_info=True)
             return False
 
     def check_needs_update(self, package_name, update_list):
         if not package_name in self.packages_data:
+            logger.warning(f"Package {package_name} not found in packages data")
             return False
             
         try:
@@ -153,11 +189,53 @@ class PackageOperations:
                 return True
                 
             return False
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error checking update status for {package_name}: {str(e)}", exc_info=True)
             return False
 
+    def process_install_queue(self):
+        """Process the installation queue sequentially"""
+        while True:
+            try:
+                if not self.install_queue.empty():
+                    package_name, callback = self.install_queue.get()
+                    self.installing = True
+                    self._install_package(package_name, callback)
+                    self.install_queue.task_done()
+                else:
+                    self.installing = False
+                    time.sleep(0.1)  # Prevent CPU thrashing
+            except Exception as e:
+                logger.error(f"Error in install queue processor: {str(e)}", exc_info=True)
+                self.installing = False
+                time.sleep(1)  # Wait before retrying
+
     def install_package(self, package_name, callback=None):
+        """Queue a package for installation"""
+        if not self.install_thread or not self.install_thread.is_alive():
+            self.install_thread = threading.Thread(target=self.process_install_queue, daemon=True)
+            self.install_thread.start()
+            
+        self.install_queue.put((package_name, callback))
+
+    def _verify_package_installed(self, package_id):
+        """Verify if a package is actually installed by checking winget list"""
+        try:
+            process = subprocess.run(
+                ['winget', 'list', '--id', package_id],
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return package_id.lower() in process.stdout.lower()
+        except Exception as e:
+            logger.error(f"Error verifying package installation: {str(e)}")
+            return False
+
+    def _install_package(self, package_name, callback=None):
+        """Internal method to actually install a package"""
         if package_name not in self.packages_data:
+            logger.warning(f"Package {package_name} not found in packages data")
             if callback:
                 callback(f"Package {package_name} not found")
             return
@@ -168,38 +246,87 @@ class PackageOperations:
             package_id = package_data['dl'].get('winget')
 
         if not package_id:
+            logger.warning(f"No winget ID found for package {package_name}")
             if callback:
                 callback(f"No winget ID found for {package_name}")
             return
 
         try:
             if callback:
-                callback(f"Installing {package_name}...", show_progress=True)
-            
+                callback(f"Installing {package_name}...")
+
+            logger.info(f"Starting installation of {package_name} (WinGet ID: {package_id})")
+
+            # First try non-elevated install
+            cmd = [
+                'winget',
+                'install',
+                '--id', package_id,
+                '-e',
+                '--accept-source-agreements',
+                '--accept-package-agreements'
+            ]
+
+            logger.info(f"Attempting non-elevated install for {package_name}")
             process = subprocess.run(
-                ['winget', 'install', '--id', package_id, '-e', '--accept-source-agreements', '--accept-package-agreements'],
+                cmd,
                 capture_output=True,
                 text=True,
-                startupinfo=self.startupinfo
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
-            
-            if process.returncode == 0:
-                # Set status to Updated
+
+            # If non-elevated fails, try elevated install
+            if process.returncode != 0:
+                logger.info(f"Non-elevated install failed for {package_name}, attempting elevated install")
+                
+                # Create elevated PowerShell command with proper argument handling
+                ps_cmd = [
+                    'powershell.exe',
+                    '-NoProfile',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-Command',
+                    f'$process = Start-Process -FilePath winget -ArgumentList "install", "{package_id}" -Verb RunAs -Wait -PassThru; exit $process.ExitCode'
+                ]
+
+                logger.info(f"Running elevated install for {package_name}")
+                process = subprocess.run(
+                    ps_cmd,
+                    capture_output=True,
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+
+            # Check if installation was successful
+            verify_cmd = ['winget', 'list', '--id', package_id]
+            verify_process = subprocess.run(
+                verify_cmd,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            if package_id.lower() in verify_process.stdout.lower():
+                logger.info(f"Successfully installed {package_name}")
                 self.installation_status[package_name] = True
-                self.update_status_dict[package_name] = False  # No updates needed for fresh install
+                self.update_status_dict[package_name] = False
                 if self.status_queue:
                     self.status_queue.put(("update_package", (package_name, True, False)))
                 if callback:
                     callback(f"Successfully installed {package_name}")
             else:
+                error_msg = process.stderr if process.stderr else "Unknown error"
+                logger.error(f"Failed to install {package_name}: {error_msg}")
                 if callback:
-                    callback(f"Failed to install {package_name}: {process.stderr}")
+                    callback(f"Failed to install {package_name}")
+
         except Exception as e:
+            logger.error(f"Error installing {package_name}: {str(e)}", exc_info=True)
             if callback:
                 callback(f"Error installing {package_name}: {str(e)}")
 
     def uninstall_package(self, package_name, callback=None):
         if package_name not in self.packages_data:
+            logger.warning(f"Package {package_name} not found in packages data")
             if callback:
                 callback(f"Package {package_name} not found")
             return
@@ -210,13 +337,15 @@ class PackageOperations:
             package_id = package_data['dl'].get('winget')
 
         if not package_id:
+            logger.warning(f"No winget ID found for package {package_name}")
             if callback:
                 callback(f"No winget ID found for {package_name}")
             return
 
         try:
             if callback:
-                callback(f"Uninstalling {package_name}...", show_progress=True)
+                #callback(f"Uninstalling {package_name}...")
+                callback(f" Uninstalling {package_name}...", show_progress=True)
             
             process = subprocess.run(
                 ['winget', 'uninstall', '--id', package_id, '-e', '--accept-source-agreements'],
@@ -236,10 +365,16 @@ class PackageOperations:
                     callback(f"Successfully uninstalled {package_name}")
             else:
                 if callback:
-                    callback(f"Failed to uninstall {package_name}: {process.stderr}")
+                    logger.error(f"Failed to uninstall {package_name}", 
+                                            f"Error: {process.stderr}\nOutput: {process.stdout}")
+                    callback(f"Failed to uninstall {package_name}")
+
         except Exception as e:
+            logger.error(f"Error uninstalling {package_name}: {str(e)}", exc_info=True)
             if callback:
-                callback(f"Error uninstalling {package_name}: {str(e)}")
+                logger.error(f"Error uninstalling {package_name}", 
+                        f"{str(e)}")
+                callback(f"Failed to uninstall {package_name}")
 
     def get_exact_package_id(self, package_name):
         try:
@@ -260,11 +395,13 @@ class PackageOperations:
                     if len(parts) >= 2:
                         return parts[1]  # The ID is typically the second column
             return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error getting exact package ID for {package_name}: {str(e)}", exc_info=True)
             return None
 
     def update_package(self, package_name, callback=None):
         if package_name not in self.packages_data:
+            logger.warning(f"Package {package_name} not found in packages data")
             if callback:
                 callback(f"Package {package_name} not found")
             return
@@ -279,8 +416,9 @@ class PackageOperations:
             package_id = package_data['winget']
 
         if not package_id:
+            logger.warning(f"No winget ID found in package data for {package_name}")
             if callback:
-                callback(f"No winget ID found in package data for {package_name}")
+                callback(f"No winget ID found for {package_name}")
             return
 
         try:
@@ -314,12 +452,13 @@ class PackageOperations:
                     callback(f"Successfully updated {package_name}")
             else:
                 if callback:
-                    logging.error(f"Failed to update {package_name}", 
+                    logger.error(f"Failed to update {package_name}", 
                                             f"Error: {process.stderr}\nOutput: {process.stdout}")
                     callback(f"Failed to updated {package_name}")
         except Exception as e:
+            logger.error(f"Error updating {package_name}: {str(e)}", exc_info=True)
             if callback:
-                logging.error(f"Error updating {package_name}", 
+                logger.error(f"Error updating {package_name}", 
                         f"{str(e)}")
                 callback(f"Failed to updated {package_name}")
 

@@ -67,20 +67,34 @@ class SystemTools:
     def get_disk_cleanup_size():
         try:
             # Get temp folder size
-            temp_size = sum(os.path.getsize(os.path.join(os.environ['TEMP'], f)) 
-                          for f in os.listdir(os.environ['TEMP']) 
-                          if os.path.isfile(os.path.join(os.environ['TEMP'], f)))
-            
+            temp_size = 0
+            try:
+                temp_dir = os.environ.get('TEMP')
+                if temp_dir and os.path.exists(temp_dir):
+                    temp_size = sum(os.path.getsize(os.path.join(temp_dir, f)) 
+                                for f in os.listdir(temp_dir) 
+                                if os.path.isfile(os.path.join(temp_dir, f)))
+            except (PermissionError, OSError) as e:
+                print(f"Warning: Could not access temp directory: {e}")
+
             # Get recycle bin size
             recycle_size = 0
-            for drive in ['C:', 'D:', 'E:', 'F:']:
+            # Get available drives
+            drives = [d.device for d in psutil.disk_partitions() if 'fixed' in d.opts.lower()]
+            
+            for drive in drives:
                 try:
                     bin_path = os.path.join(drive, '$Recycle.Bin')
                     if os.path.exists(bin_path):
-                        recycle_size += sum(os.path.getsize(os.path.join(dirpath, filename))
-                                          for dirpath, _, filenames in os.walk(bin_path)
-                                          for filename in filenames)
-                except:
+                        for dirpath, _, filenames in os.walk(bin_path, onerror=None):
+                            for filename in filenames:
+                                try:
+                                    file_path = os.path.join(dirpath, filename)
+                                    if os.path.exists(file_path):  # Check if file still exists
+                                        recycle_size += os.path.getsize(file_path)
+                                except (PermissionError, OSError):
+                                    continue
+                except (PermissionError, OSError):
                     continue
 
             return True, {

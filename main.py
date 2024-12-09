@@ -1,6 +1,6 @@
 """
 MTechWinTool - Windows System Utility
-Version: Beta 0.0.4a
+Version: Beta 0.0.5a
 
 A modern Windows utility for system monitoring and software management.
 This application might require administrative privileges for certain operations:
@@ -30,6 +30,13 @@ import sys
 import platform
 from datetime import datetime
 import subprocess
+from system_tweaks import (
+    SystemTweaks, PerformanceTweaks, PrivacyTweaks, DesktopTweaks,
+    GamingTweaks, PowerTweaks, NetworkTweaks, MaintenanceTweaks
+)
+import ctypes
+import logging
+import webbrowser
 
 class WinGetInstaller:
     def __init__(self, root):
@@ -220,7 +227,7 @@ class WinGetInstaller:
             self.progress.stop()
             self.progress.grid_forget()
             error_msg = e.stderr if e.stderr else str(e)
-            self.status_label.configure(text=f"❌ Installation failed: PowerShell error", foreground="red")
+            self.status_label.configure(text="❌ Installation failed: PowerShell error", foreground="red")
             print(f"PowerShell Error: {error_msg}")  # For debugging
             # Try again after 3 seconds
             self.root.after(3000, self.check_winget)
@@ -247,13 +254,96 @@ class WinGetInstaller:
 
 class WinTool:
     def __init__(self, root=None):
+        # Set up logging
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        
+        # Create logs directory if it doesn't exist
+        if not os.path.exists('logs'):
+            os.makedirs('logs')
+            
+        # Create file handler
+        log_file = os.path.join('logs', 'mtech_wintool.log')
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+        
+        # Create console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        
+        # Create formatter
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        
+        # Add handlers to logger
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
+        
         if root is None:
             self.root = tk.Tk()
         else:
             self.root = root
             
         self.root.title("MTech WinTool")
-        self.root.attributes('-topmost', True)  # Make window stay on top
+        self.root.attributes('-topmost', False)  # Make window stay on top
+        self.root.overrideredirect(True)  # Remove default title bar
+        
+        # Create custom title bar
+        title_bar = ttk.Frame(self.root)
+        title_bar.pack(fill=tk.X, expand=False)
+
+        # Configure styles
+        style = ttk.Style()
+        style.configure('TitleButton.TButton', 
+                       font=("Segoe UI", 10),
+                       padding=0,
+                       background='#1c1c1c',
+                       foreground='white')
+        
+        #title_label = ttk.Label(title_bar, text=" MTech WinTool | Version Beta 0.0.5a | https://mtech.glitch.me/wintool.html", font=("Segoe UI", 10, "bold"), foreground='#ff6b00')
+        #title_label.pack(side=tk.LEFT, padx=(2, 5))
+        
+        # Bind dragging events to title label
+        #title_label.bind('<Button-1>', self.start_move)
+        #title_label.bind('<B1-Motion>', self.on_move)
+        
+        # Add minimize and close buttons with matching background
+        close_button = tk.Button(title_bar, text="✕", width=2, 
+                               command=self.root.destroy,
+                               font=("Segoe UI", 10),
+                               fg='white',
+                               bg='#1c1c1c',
+                               relief='flat',
+                               bd=0)
+        close_button.pack(side=tk.RIGHT, padx=(0, 2))
+        
+        # Add hover effect for close button
+        def on_enter(e):
+            close_button.config(fg='red')
+        def on_leave(e):
+            close_button.config(fg='white')
+        
+        close_button.bind('<Enter>', on_enter)
+        close_button.bind('<Leave>', on_leave)
+        
+        minimize_button = tk.Button(title_bar, text="─", width=2,
+                                  command=self.root.iconify,
+                                  font=("Segoe UI", 10),
+                                  fg='white',
+                                  bg='#1c1c1c',
+                                  relief='flat',
+                                  bd=0)
+        minimize_button.pack(side=tk.RIGHT, padx=(0, 0))
+        
+        # Make window draggable
+        title_bar.bind('<Button-1>', self.start_move)
+        title_bar.bind('<B1-Motion>', self.do_move)
+        
+        # Configure style for custom title bar
+        style.configure('TitleBar.TFrame', background='#1c1c1c')
+        style.configure('TitleBar.TLabel', background='#1c1c1c', foreground='white')
+        style.configure('TitleBar.TButton', padding=0)
         
         # Handle icon path for both development and bundled executable
         try:
@@ -288,6 +378,19 @@ class WinTool:
         self.sys_tools = SystemTools()
         self.unattend_creator = UnattendCreator()
         self.status_queue = queue.Queue()
+        self.tweak_frames = []  # Initialize tweak_frames list
+        
+        # Initialize tweak components
+        self.performance_tweaks = PerformanceTweaks()
+        self.privacy_tweaks = PrivacyTweaks()
+        self.desktop_tweaks = DesktopTweaks()
+        self.power_tweaks = PowerTweaks()
+        self.gaming_tweaks = GamingTweaks()
+        self.network_tweaks = NetworkTweaks()
+        self.maintenance_tweaks = MaintenanceTweaks()
+        
+        # Dictionary to store tweak functions
+        self.tweak_functions = {}
         
         # Setup UI first
         self.setup_ui()
@@ -315,15 +418,23 @@ class WinTool:
         style.configure("NotInstalled.TLabel", foreground="gray")
         style.configure("NeedsUpdate.TLabel", foreground="orange")
         style.configure("About.TLabel", font=("Segoe UI", 10))
-        style.configure("AboutTitle.TLabel", font=("Segoe UI", 14, "bold"), foreground='#ff9800')  # Orange color
+        style.configure("AboutTitle.TLabel", font=("Segoe UI", 14, "bold"), foreground='#ff6b00')  # Orange color
         style.configure("Dashboard.TFrame", padding=10)
-        style.configure("DashboardTitle.TLabel", font=("Segoe UI", 16, "bold"), foreground='#ff9800')  # Orange color
+        style.configure("DashboardTitle.TLabel", font=("Segoe UI", 16, "bold"), foreground='#ff6b00')  # Match the orange color
         style.configure("DashboardSubtitle.TLabel", font=("Segoe UI", 12))
         style.configure("DashboardCard.TFrame", padding=15)
         style.configure("DashboardMetric.TLabel", font=("Segoe UI", 24, "bold"))
         style.configure("DashboardText.TLabel", font=("Segoe UI", 10))
         style.configure("DashboardSubtext.TLabel", font=("Segoe UI", 9))
         style.configure("DashboardAction.TButton", padding=10)
+        
+        # Configure notebook tab style for better width and appearance
+        style.configure('TNotebook.Tab', padding=(12, 5))
+        style.layout('TNotebook.Tab', [('Notebook.tab', {'sticky': 'nswe', 'children':
+            [('Notebook.padding', {'side': 'top', 'sticky': 'nswe', 'children':
+                [('Notebook.label', {'side': 'top', 'sticky': ''})],
+            })],
+        })])
         
         # Configure tag colors for treeview
         self.tree_tags = {
@@ -332,17 +443,59 @@ class WinTool:
             'needs_update': 'orange'
         }
         
-        # Main container
-        main_container = ttk.Frame(self.root)
-        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        # Add gradient header
+        header_frame = tk.Frame(self.root, height=40, bg='#1c1c1c')
+        header_frame.pack(fill=tk.X)
+        
+        # Make header draggable
+        header_frame.bind('<Button-1>', self.start_move)
+        header_frame.bind('<B1-Motion>', self.on_move)
+        
+        header_label = ttk.Label(header_frame, 
+                               text="MTech Windows Utility",
+                               font=("Segoe UI", 16, "bold"),
+                               foreground='white',
+                               background='#1c1c1c')
+        header_label.pack(pady=(5, 0))
+        
+        # Make header label draggable
+        header_label.bind('<Button-1>', self.start_move)
+        header_label.bind('<B1-Motion>', self.on_move)
+        
+        subtitle_label = ttk.Label(header_frame,
+                                text="MTech WinTool | Version Beta 0.0.5a | https://mtech.glitch.me/wintool.html",
+                                font=("Segoe UI", 9),
+                                foreground='#ff6b00',
+                                background='#1c1c1c')
+        subtitle_label.pack(pady=(0, 5))
+        
+        # Make subtitle label draggable
+        subtitle_label.bind('<Button-1>', self.start_move)
+        subtitle_label.bind('<B1-Motion>', self.on_move)
+        
+        # Add separator under header
+        separator = ttk.Separator(self.root, orient='horizontal')
+        separator.pack(fill=tk.X)
+        
+        # Create main content frame with draggable background
+        self.content_frame = ttk.Frame(self.root)
+        self.content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Make content frame draggable
+        self.content_frame.bind('<Button-1>', self.start_move)
+        self.content_frame.bind('<B1-Motion>', self.on_move)
         
         # Create notebook for tabs
-        self.notebook = ttk.Notebook(main_container)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self.content_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)  # Remove padding
+        
+        # Bind tab change event
+        self.notebook.bind('<<NotebookTabChanged>>', self.on_tab_changed)
         
         # Create tabs
         self.setup_dashboard_tab()  # Add dashboard as first tab
         self.setup_packages_tab()
+        self.setup_tweaks_tab()
         self.setup_monitor_tab()
         self.setup_tools_tab()
         self.setup_unattend_tab()
@@ -350,14 +503,18 @@ class WinTool:
 
     def setup_packages_tab(self):
         packages_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
-        self.notebook.add(packages_tab, text=" 📦 Winget Packages ")
+        self.notebook.add(packages_tab, text="📦 Packages")
         
         # Header frame with status
         header_frame = ttk.Frame(packages_tab)
         header_frame.pack(fill=tk.X, pady=(10, 20))
         
-        title_label = ttk.Label(header_frame, text="WinGet Package Manager", style="Header.TLabel")
+        title_label = ttk.Label(header_frame, text="WinGet Package Manager (Hold Ctrl + Left Click to select)", style="Header.TLabel")
         title_label.pack(side=tk.LEFT)
+        
+        # Make title label draggable
+        title_label.bind('<Button-1>', self.start_move)
+        title_label.bind('<B1-Motion>', self.on_move)
         
         # Status frame
         self.status_frame = ttk.Frame(header_frame)
@@ -365,6 +522,10 @@ class WinTool:
         
         self.status_label = ttk.Label(self.status_frame, text="Ready", style="Status.TLabel")
         self.status_label.pack(side=tk.RIGHT)
+        
+        # Make status label draggable
+        self.status_label.bind('<Button-1>', self.start_move)
+        self.status_label.bind('<B1-Motion>', self.on_move)
         
         self.progress_bar = ttk.Progressbar(self.status_frame, mode='indeterminate', length=100)
         
@@ -374,6 +535,10 @@ class WinTool:
         
         search_label = ttk.Label(search_frame, text="🔍", font=("Segoe UI", 12))
         search_label.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Make search label draggable
+        search_label.bind('<Button-1>', self.start_move)
+        search_label.bind('<B1-Motion>', self.on_move)
         
         self.search_var = tk.StringVar()
         self.search_var.trace('w', self.filter_packages)
@@ -396,6 +561,10 @@ class WinTool:
         
         self.stats_label = ttk.Label(stats_frame, text="", style="Header.TLabel")
         self.stats_label.pack(side=tk.LEFT)
+        
+        # Make stats label draggable
+        self.stats_label.bind('<Button-1>', self.start_move)
+        self.stats_label.bind('<B1-Motion>', self.on_move)
         
         # Package list with improved styling
         list_frame = ttk.Frame(packages_tab, style="Content.TFrame")
@@ -457,8 +626,8 @@ class WinTool:
 
     def setup_monitor_tab(self):
         monitor_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
-        self.notebook.add(monitor_tab, text=" 📊 System Monitor ")
-
+        self.notebook.add(monitor_tab, text="📊 Monitor")
+        
         # Resource Usage Frame
         resource_frame = ttk.LabelFrame(monitor_tab, text="💻 Resource Usage", padding="15")
         resource_frame.pack(fill=tk.X, pady=(0, 15))
@@ -543,8 +712,8 @@ class WinTool:
 
     def setup_tools_tab(self):
         tools_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
-        self.notebook.add(tools_tab, text=" 🛠️ Tools ")
-
+        self.notebook.add(tools_tab, text="🔧 Tools")
+        
         # Create a frame for the tools grid
         tools_frame = ttk.LabelFrame(tools_tab, text="🔧 System Tools", padding="15")
         tools_frame.pack(fill=tk.BOTH, expand=True)
@@ -581,8 +750,8 @@ class WinTool:
 
     def setup_unattend_tab(self):
         unattend_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
-        self.notebook.add(unattend_tab, text=" 📝 Unattend ")
-
+        self.notebook.add(unattend_tab, text="📝 Unattend")
+        
         # Create notebook for settings categories
         self.settings_notebook = ttk.Notebook(unattend_tab)
         self.settings_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -624,8 +793,8 @@ class WinTool:
 
     def setup_about_tab(self):
         about_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
-        self.notebook.add(about_tab, text=" ℹ️ About ")
-
+        self.notebook.add(about_tab, text="ℹ️ About")
+        
         # Create main content frame
         content_frame = ttk.Frame(about_tab)
         content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -634,22 +803,26 @@ class WinTool:
         title_label = ttk.Label(content_frame, text="MTech WinTool", style="AboutTitle.TLabel")
         title_label.pack(pady=(0, 10))
 
-        version_label = ttk.Label(content_frame, text="Beta Version 0.0.4a", style="About.TLabel")
-        version_label.pack(pady=(0, 20))
-
+        version_frame = ttk.Frame(content_frame)
+        version_frame.pack(fill=tk.X, pady=(20, 0))
+        
         # Features frame
-        features_frame = ttk.LabelFrame(content_frame, text="Features", padding=15)
+        features_frame = ttk.LabelFrame(content_frame, text="✨ Features", padding=15)
         features_frame.pack(fill=tk.X, pady=(0, 20))
 
-        features_text = """📦 Package Management with Winget Integration
-🖥️ System Monitoring and Performance Metrics
-🛠️ System Tools and Utilities
-📝 Windows Unattend File Creation
-🌙 Dark Mode Support"""
+        # Create features with icons
+        features_text = [
+            "📦 Packages - Software management with WinGet integration",
+            "⚡ Tweaks - Performance optimization and privacy settings",
+            "📊 Monitor - Real-time system resource tracking",
+            "🔧 Tools - Quick access to Windows utilities",
+            "📝 Unattend - Custom Windows setup configuration"
+        ]
 
-        features_label = ttk.Label(features_frame, text=features_text, style="About.TLabel", justify=tk.LEFT)
-        features_label.pack(anchor="w", padx=10)
-
+        for feature in features_text:
+            feature_label = ttk.Label(features_frame, text=feature, wraplength=400)
+            feature_label.pack(anchor=tk.W, pady=2)
+        
         # System info frame
         system_frame = ttk.LabelFrame(content_frame, text="System Information", padding=15)
         system_frame.pack(fill=tk.X)
@@ -666,31 +839,84 @@ class WinTool:
         credits_frame = ttk.LabelFrame(content_frame, text="Credits", padding=15)
         credits_frame.pack(fill=tk.X, pady=(20, 0))
 
-        credits_text = """👨‍💻 Created by: MTechware
-🎨 Theme: Sun Valley (sv-ttk)
-🎯 Icons: Segoe Fluent Icons"""
+        # Creator info with link
+        creator_frame = ttk.Frame(credits_frame)
+        creator_frame.pack(fill=tk.X)
+        
+        creator_label = ttk.Label(creator_frame, text="Created by: MTechware", font=("Segoe UI", 9))
+        creator_label.pack(side=tk.LEFT, padx=(0, 5))
+        
+        link_label = ttk.Label(creator_frame, 
+                             text="Visit Website", 
+                             font=("Segoe UI", 9, "underline"),
+                             foreground='#ff6b00',
+                             cursor="hand2")
+        link_label.pack(side=tk.LEFT)
+        link_label.bind("<Button-1>", lambda e: webbrowser.open_new("https://github.com/MTechWare"))
 
-        credits_label = ttk.Label(credits_frame, text=credits_text, style="About.TLabel", justify=tk.LEFT)
-        credits_label.pack(anchor="w", padx=10)
+        # Additional credits
+        additional_credits = """Special thanks to:
+• ChrisTitusTech for the Winget Applications
+• Sun Valley ttk theme"""
+        credits_label = ttk.Label(credits_frame, text=additional_credits, style="About.TLabel", justify=tk.LEFT)
+        credits_label.pack(anchor="w", padx=10, pady=(10, 0))
 
     def on_tab_changed(self, event):
-        current_tab = self.settings_notebook.select()
-        tab_id = self.settings_notebook.index(current_tab)
-        total_tabs = self.settings_notebook.index('end')
+        try:
+            # Get the widget that triggered the event
+            widget = event.widget
+            
+            # If it's the main notebook
+            if widget == self.notebook:
+                current_tab = self.notebook.select()
+                if not current_tab:  # If no tab is selected, do nothing
+                    return
+                    
+                tab_text = self.notebook.tab(current_tab, "text")
+                
+                if tab_text.strip() == "⚡ Tweaks":
+                    if not ctypes.windll.shell32.IsUserAnAdmin():
+                        result = messagebox.askyesno(
+                            "Administrator Rights Required",
+                            "The Tweaks tab requires administrator rights to function properly. Do you want to restart the application as administrator?"
+                        )
+                        if result:
+                            # Start the elevated process
+                            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+                            # Destroy the root window and exit
+                            self.root.destroy()
+                            sys.exit(0)
+                        else:
+                            # Safely switch back to the dashboard tab
+                            self.notebook.select(0)  # Select dashboard tab
+                            return
+                        
+            # If it's the settings notebook (for unattend tab)
+            elif hasattr(self, 'settings_notebook') and widget == self.settings_notebook:
+                current_tab = self.settings_notebook.select()
+                tab_id = self.settings_notebook.index(current_tab)
+                total_tabs = self.settings_notebook.index('end')
 
-        # Show/hide back button
-        if tab_id > 0:
-            self.back_btn.pack(side=tk.LEFT, padx=5)
-        else:
-            self.back_btn.pack_forget()
+                # Show/hide back button
+                if tab_id > 0:
+                    self.back_btn.pack(side=tk.LEFT, padx=5)
+                else:
+                    self.back_btn.pack_forget()
 
-        # Update next button text and show/hide save button
-        if tab_id == total_tabs - 1:  # Last tab
-            self.next_btn.pack_forget()
-            self.save_btn.pack(side=tk.RIGHT, padx=5)
-        else:
-            self.save_btn.pack_forget()
-            self.next_btn.pack(side=tk.RIGHT, padx=5)
+                # Update next button text and show/hide save button
+                if tab_id == total_tabs - 1:  # Last tab
+                    self.next_btn.pack_forget()
+                    self.save_btn.pack(side=tk.RIGHT, padx=5)
+                else:
+                    self.save_btn.pack_forget()
+                    self.next_btn.pack(side=tk.RIGHT, padx=5)
+        except Exception as e:
+            print(f"Error in tab change: {e}")
+            # Safely switch to dashboard tab if there's an error
+            try:
+                self.notebook.select(0)
+            except:
+                pass
 
     def next_tab(self):
         current_tab = self.settings_notebook.select()
@@ -788,7 +1014,6 @@ class WinTool:
         ttk.Label(account_settings, text="Auto Logon Count:").pack(anchor='w')
         self.auto_logon_count = ttk.Spinbox(account_settings, from_=1, to=999, width=10)
         self.auto_logon_count.pack(fill=tk.X, pady=(0, 5))
-        self.auto_logon_count.set(self.unattend_creator.settings['auto_logon_count'])
 
         self.disable_admin = tk.BooleanVar(value=False)
         ttk.Checkbutton(account_settings, text="Disable Administrator Account", variable=self.disable_admin).pack(anchor='w', pady=2)
@@ -1010,16 +1235,57 @@ class WinTool:
         return item['text']
 
     def install_package(self):
-        package_name = self.get_selected_package()
-        if not package_name:
-            messagebox.showwarning("No Package Selected", "Please select a package to install.")
+        selected_items = self.tree.selection()
+        if not selected_items:
+            messagebox.showwarning("No Package Selected", "Please select one or more packages to install.")
             return
             
-        if self.pkg_ops.installation_status.get(package_name, False):
-            messagebox.showinfo("Already Installed", f"{package_name} is already installed.")
+        # Get all selected packages that are not categories
+        packages_to_install = []
+        for item in selected_items:
+            # Skip if it's a category (no parent)
+            if not self.tree.parent(item):
+                continue
+                
+            package_name = self.tree.item(item)['text']
+            # Skip already installed packages
+            if self.pkg_ops.installation_status.get(package_name, False):
+                messagebox.showinfo("Already Installed", f"{package_name} is already installed.")
+                continue
+                
+            packages_to_install.append(package_name)
+            
+        if not packages_to_install:
             return
             
-        threading.Thread(target=self.pkg_ops.install_package, args=(package_name, self.update_status), daemon=True).start()
+        # Confirm installation
+        if len(packages_to_install) == 1:
+            msg = f"Do you want to install {packages_to_install[0]}?"
+        else:
+            msg = f"Do you want to install these {len(packages_to_install)} packages?\n\n" + "\n".join(packages_to_install)
+            
+        if not messagebox.askyesno("Confirm Installation", msg):
+            return
+            
+        # Queue each package for installation
+        total_packages = len(packages_to_install)
+        current_package = 0
+        
+        def update_status_with_progress(message, show_progress=False):
+            current_nonlocal = getattr(update_status_with_progress, 'current', 0)
+            if "Successfully installed" in message:
+                current_nonlocal += 1
+                setattr(update_status_with_progress, 'current', current_nonlocal)
+                progress = int((current_nonlocal / total_packages) * 100)
+                self.update_status(f"Installing packages... ({current_nonlocal}/{total_packages}) {progress}% - {message}")
+            else:
+                self.update_status(message, show_progress)
+        
+        setattr(update_status_with_progress, 'current', 0)
+        
+        # Queue installations
+        for package in packages_to_install:
+            self.pkg_ops.install_package(package, update_status_with_progress)
 
     def uninstall_package(self):
         package_name = self.get_selected_package()
@@ -1184,7 +1450,7 @@ class WinTool:
             canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         
         canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
+        
         # Bind mouse enter/leave events to manage mousewheel scrolling
         def _bind_mousewheel(event):
             canvas.bind_all("<MouseWheel>", _on_mousewheel)
@@ -1201,9 +1467,288 @@ class WinTool:
 
         return scrollable_frame
 
+    def setup_tweaks_tab(self):
+        tweaks_tab = ttk.Frame(self.notebook, padding="20 10 20 10")
+        self.notebook.add(tweaks_tab, text="⚡ Tweaks")
+        
+        # Create top frame for search (fixed at top)
+        top_frame = ttk.Frame(tweaks_tab)
+        top_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Add search box
+        search_frame = ttk.Frame(top_frame)
+        search_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        search_var = tk.StringVar()
+        search_var.trace('w', lambda *args: self.filter_tweaks(search_var.get()))
+        
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=40)
+        search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        search_entry.insert(0, "Search tweaks...")
+        search_entry.bind('<FocusIn>', lambda e: search_entry.delete(0, tk.END) if search_entry.get() == "Search tweaks..." else None)
+        search_entry.bind('<FocusOut>', lambda e: search_entry.insert(0, "Search tweaks...") if search_entry.get() == "" else None)
+        
+        # Add buttons
+        button_frame = ttk.Frame(top_frame)
+        button_frame.pack(side=tk.RIGHT)
+        
+        refresh_button = ttk.Button(button_frame, text="Refresh States", command=self.refresh_tweak_states)
+        refresh_button.pack(side=tk.LEFT, padx=5)
+        
+        # Create canvas for scrolling
+        canvas = tk.Canvas(tweaks_tab, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(tweaks_tab, orient="vertical", command=canvas.yview)
+        
+        # Create main frame inside canvas
+        main_frame = ttk.Frame(canvas)
+        
+        # Configure scrolling
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Create window in canvas
+        canvas_frame = canvas.create_window((0, 0), window=main_frame, anchor="nw")
+        
+        # Configure canvas scrolling
+        def configure_scroll_region(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        
+        def configure_canvas_width(event):
+            canvas.itemconfig(canvas_frame, width=event.width)
+        
+        # Bind events
+        main_frame.bind("<Configure>", configure_scroll_region)
+        canvas.bind("<Configure>", configure_canvas_width)
+        
+        # Bind mouse wheel
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Store references to all tweak frames for filtering
+        self.tweak_frames = []
+        
+        # Create sections for different types of tweaks
+        sections = [
+            ("🚀 Performance Optimization", [
+                ("Set Services to Manual", "set_services_manual", "Set selected Windows services to manual startup", "service"),
+                ("Disable Visual Effects", "disable_visual_effects", "Optimize Windows for better performance", "performance"),
+                ("Disable Transparency", "disable_transparency", "Turn off transparency effects", "performance"),
+                ("Disable Animations", "disable_animations", "Turn off animation effects", "performance"),
+                ("Optimize Processor Scheduling", "optimize_processor_scheduling", "Adjust for best performance of programs", "performance"),
+                ("Disable Background Apps", "disable_background_apps", "Prevent apps from running in background", "performance"),
+                ("Disable Startup Delay", "disable_startup_delay", "Remove delay for startup programs", "performance"),
+                ("Clear Page File at Shutdown", "clear_page_file", "Secure but slower shutdown", "performance"),
+                ("Optimize SSD", "optimize_ssd", "Enable TRIM and disable defrag for SSDs", "performance")
+            ]),
+            ("🔒 Privacy & Security", [
+                ("Disable Telemetry", "disable_telemetry", "Reduce data collection by Windows", "privacy"),
+                ("Disable Cortana", "disable_cortana", "Turn off Cortana assistant", "privacy"),
+                ("Disable Activity History", "disable_activity_history", "Stop Windows from tracking activities", "privacy"),
+                ("Disable Location Tracking", "disable_location_tracking", "Turn off location services", "privacy"),
+                ("Disable Advertising ID", "disable_advertising_id", "Stop personalized ads", "privacy"),
+                ("Disable Windows Tips", "disable_windows_tips", "Stop Windows suggestions", "privacy"),
+                ("Disable Timeline", "disable_timeline", "Turn off Windows Timeline feature", "privacy"),
+                ("Disable Cloud Clipboard", "disable_cloud_clipboard", "Stop syncing clipboard to cloud", "privacy"),
+                ("Disable Diagnostic Data", "disable_diagnostic_data", "Minimize diagnostic data collection", "privacy"),
+                ("Disable Feedback", "disable_feedback", "Turn off feedback notifications", "privacy")
+            ]),
+            ("🖥️ Desktop & Explorer", [
+                ("Show File Extensions", "show_file_extensions", "Display all file extensions", "desktop"),
+                ("Show Hidden Files", "show_hidden_files", "Show hidden files and folders", "desktop"),
+                ("Disable Quick Access", "disable_quick_access", "Clean up File Explorer sidebar", "desktop"),
+                ("Classic Context Menu", "classic_context_menu", "Use Windows 10 style context menu", "desktop"),
+                ("Disable Search Highlights", "disable_search_highlights", "Remove search highlights", "desktop"),
+                ("Enable Dark Mode", "enable_dark_mode", "Enable system-wide dark theme", "desktop")
+            ]),
+            ("⚡ Power & Battery", [
+                ("High Performance", "set_high_performance", "Set power plan to high performance", "power"),
+                ("Disable USB Power Saving", "disable_usb_power_saving", "Prevent USB selective suspend", "power"),
+                ("Disable Sleep Timeout", "disable_sleep", "Prevent system from sleeping", "power")
+            ]),
+            ("🎮 Gaming Optimization", [
+                ("Game Mode", "enable_game_mode", "Enable Windows Game Mode", "gaming"),
+                ("Hardware Acceleration", "enable_hardware_acceleration", "Enable GPU scheduling", "gaming"),
+                ("Disable Game Bar", "disable_game_bar", "Remove Xbox Game Bar", "gaming")
+            ]),
+            ("🌐 Network & Internet", [
+                ("Optimize Network", "optimize_network", "Optimize network settings", "network"),
+                ("Use Fast DNS", "set_dns_servers", "Use faster DNS servers", "network")
+            ]),
+            ("🔧 System Maintenance", [
+                ("Clean Temp Files", "clean_temp_files", "Remove unnecessary files", "maintenance"),
+                ("Optimize Search", "optimize_windows_search", "Windows Search indexer", "maintenance"),
+                ("Optimize Prefetch", "optimize_prefetch", "Optimize Windows Prefetch settings", "maintenance"),
+                ("Optimize Disk Cleanup", "optimize_disk_cleanup", "Configure disk cleanup settings", "maintenance"),
+                ("Optimize System Restore", "optimize_system_restore", "Configure system restore settings", "maintenance")
+            ])
+        ]
+        
+        # Create sections
+        for i, (section_title, tweaks) in enumerate(sections):
+            # Section label
+            section_label = ttk.Label(main_frame, text=section_title, font=("Segoe UI", 12, "bold"))
+            section_label.grid(row=i*10, column=0, columnspan=2, sticky="w", pady=(20 if i > 0 else 0, 10))
+            
+            # Make section label draggable
+            section_label.bind('<Button-1>', self.start_move)
+            section_label.bind('<B1-Motion>', self.on_move)
+            
+            # Create tweaks
+            for j, (tweak_name, func_name, description, category) in enumerate(tweaks):
+                col = j % 2
+                row = (i * 10) + (j // 2) + 1
+                
+                # Create frame for each tweak
+                tweak_frame = ttk.Frame(main_frame)
+                tweak_frame.grid(row=row, column=col, padx=5, pady=2, sticky="ew")
+                
+                # Add switch
+                switch_var = tk.BooleanVar()
+                switch = ttk.Checkbutton(
+                    tweak_frame, 
+                    text=tweak_name,
+                    variable=switch_var,
+                    command=lambda n=func_name, v=switch_var: self.on_tweak_toggled(n, v)
+                )
+                switch.pack(side=tk.LEFT, padx=(0, 5))
+                
+                # Add description
+                desc_label = ttk.Label(tweak_frame, text=description, foreground="gray")
+                desc_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                
+                # Store references for filtering and state management
+                self.tweak_frames.append({
+                    'frame': tweak_frame,
+                    'name': tweak_name,
+                    'description': description,
+                    'section': section_title.lower()
+                })
+                
+                # Store function references and variables
+                self.tweak_functions[func_name] = {
+                    'var': switch_var,
+                    'category': category
+                }
+        
+        # Refresh tweak states after UI setup
+        self.root.after(100, self.refresh_tweak_states)
+
+    def filter_tweaks(self, search_text):
+        """Filter tweaks based on search text"""
+        search_text = search_text.lower()
+        if search_text == "search tweaks...":
+            search_text = ""
+            
+        for tweak in self.tweak_frames:
+            if (search_text in tweak['name'].lower() or 
+                search_text in tweak['description'].lower() or 
+                search_text in tweak['section'].lower()):
+                tweak['frame'].grid()
+            else:
+                tweak['frame'].grid_remove()
+
+    def on_tweak_toggled(self, tweak_name, var):
+        """Handle tweak checkbox toggle"""
+        try:
+            # Get the appropriate tweak class based on category
+            category = self.tweak_functions[tweak_name]['category']
+            tweak_class = None
+            if category == 'performance':
+                tweak_class = self.performance_tweaks
+            elif category == 'privacy':
+                tweak_class = self.privacy_tweaks
+            elif category == 'desktop':
+                tweak_class = self.desktop_tweaks
+            elif category == 'power':
+                tweak_class = self.power_tweaks
+            elif category == 'gaming':
+                tweak_class = self.gaming_tweaks
+            elif category == 'network':
+                tweak_class = self.network_tweaks
+            elif category == 'maintenance':
+                tweak_class = self.maintenance_tweaks
+
+            # Get the tweak function
+            if hasattr(tweak_class, tweak_name):
+                tweak_func = getattr(tweak_class, tweak_name)
+                success = tweak_func(var.get())
+                if success:
+                    self.show_notification(f"Successfully {'applied' if var.get() else 'reverted'} {tweak_name}")
+                    self.logger.info(f"Successfully {'applied' if var.get() else 'reverted'} tweak: {tweak_name}")
+                else:
+                    self.show_notification(f"Failed to {'apply' if var.get() else 'revert'} {tweak_name}", "error")
+                    self.logger.error(f"Failed to apply tweak: {tweak_name}")
+                    # Reset the checkbox to its previous state
+                    var.set(not var.get())
+            else:
+                self.show_notification(f"Function {tweak_name} not found", "error")
+                self.logger.error(f"Function {tweak_name} not found")
+                var.set(not var.get())
+        except Exception as e:
+            self.show_notification(f"Error applying {tweak_name}: {str(e)}", "error")
+            self.logger.error(f"Error applying tweak {tweak_name}: {str(e)}")
+            var.set(not var.get())
+
+    def show_notification(self, message, type="info"):
+        """Show a small notification in the UI"""
+        style = "success.TLabel" if type == "success" else "error.TLabel" if type == "error" else "info.TLabel"
+        
+        # Create and configure notification styles if they don't exist
+        self.root.tk.call("ttk::style", "configure", "success.TLabel", "-foreground", "green")
+        self.root.tk.call("ttk::style", "configure", "error.TLabel", "-foreground", "red")
+        self.root.tk.call("ttk::style", "configure", "info.TLabel", "-foreground", "blue")
+        
+        notification = ttk.Label(self.root, text=message, style=style)
+        notification.place(relx=1.0, rely=1.0, x=-10, y=-10, anchor="se")
+        
+        # Schedule the notification to be removed after 3 seconds
+        self.root.after(3000, notification.destroy)
+
+    def refresh_tweak_states(self):
+        """Check and update the state of all tweaks"""
+        try:
+            for func_name, data in self.tweak_functions.items():
+                try:
+                    # Get the appropriate tweak class based on category
+                    category = data['category']
+                    tweak_class = None
+                    if category == 'performance':
+                        tweak_class = self.performance_tweaks
+                    elif category == 'privacy':
+                        tweak_class = self.privacy_tweaks
+                    elif category == 'desktop':
+                        tweak_class = self.desktop_tweaks
+                    elif category == 'power':
+                        tweak_class = self.power_tweaks
+                    elif category == 'gaming':
+                        tweak_class = self.gaming_tweaks
+                    elif category == 'network':
+                        tweak_class = self.network_tweaks
+                    elif category == 'maintenance':
+                        tweak_class = self.maintenance_tweaks
+
+                    # Get the check function
+                    check_name = f"check_{func_name}"
+                    if hasattr(tweak_class, check_name):
+                        check_func = getattr(tweak_class, check_name)
+                        is_enabled = check_func()
+                        data['var'].set(is_enabled)
+                        self.logger.info(f"State of {func_name}: {is_enabled}")
+                    else:
+                        self.logger.warning(f"No check function found: {check_name}")
+                except Exception as e:
+                    self.logger.error(f"Error checking state for {func_name}: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"Error refreshing tweak states: {str(e)}")
+            
     def setup_dashboard_tab(self):
         dashboard_tab = ttk.Frame(self.notebook, padding="20 10 20 10", style="Dashboard.TFrame")
-        self.notebook.add(dashboard_tab, text=" 🏠 Dashboard ")
+        self.notebook.add(dashboard_tab, text="🏠 Home")
         self.notebook.select(0)  # Make dashboard the default tab
 
         # Welcome header with gradient-like effect
@@ -1218,12 +1763,19 @@ class WinTool:
         subtitle_label = ttk.Label(title_frame, text="Your Windows System Management Hub", style="DashboardSubtitle.TLabel")
         subtitle_label.pack(anchor="w")
 
+        # Make title and subtitle labels draggable
+        title_label.bind('<Button-1>', self.start_move)
+        title_label.bind('<B1-Motion>', self.on_move)
+        subtitle_label.bind('<Button-1>', self.start_move)
+        subtitle_label.bind('<B1-Motion>', self.on_move)
+        
         # Create main content frame with grid layout
         content_frame = ttk.Frame(dashboard_tab)
         content_frame.pack(fill=tk.BOTH, expand=True)
         for i in range(2):
             content_frame.grid_columnconfigure(i, weight=1)
-        content_frame.grid_rowconfigure(1, weight=1)
+        content_frame.grid_rowconfigure(0, weight=3)  # Give more weight to top row
+        content_frame.grid_rowconfigure(1, weight=2)  # Less weight to bottom row
 
         # System Health Card with modern metrics
         health_frame = ttk.LabelFrame(content_frame, text="💻 System Health", padding=15, style="DashboardCard.TFrame")
@@ -1272,6 +1824,10 @@ class WinTool:
         self.disk_details_label = ttk.Label(disk_info_frame, text="", style="DashboardSubtext.TLabel")
         self.disk_details_label.pack(anchor="w")
 
+        # Make disk details label draggable
+        self.disk_details_label.bind('<Button-1>', self.start_move)
+        self.disk_details_label.bind('<B1-Motion>', self.on_move)
+        
         # Quick Actions Card with modern buttons
         actions_frame = ttk.LabelFrame(content_frame, text="⚡ Quick Actions", padding=15, style="DashboardCard.TFrame")
         actions_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
@@ -1298,11 +1854,25 @@ class WinTool:
         activity_frame.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="nsew")
 
         # Activity list with custom styling
-        self.activity_text = tk.Text(activity_frame, height=8, wrap=tk.WORD, font=("Segoe UI", 10))
+        self.activity_text = tk.Text(activity_frame, height=6, wrap=tk.WORD, font=("Segoe UI", 10), 
+                                   borderwidth=0, highlightthickness=0, 
+                                   background='#1c1c1c', relief="flat")  # Match dark theme
         self.activity_text.pack(fill=tk.BOTH, expand=True)
-        self.activity_text.tag_configure("timestamp", foreground="#666666")
-        self.activity_text.tag_configure("message", foreground="#000000")
-        self.activity_text.insert(tk.END, "Welcome to MTech WinTool!\n")
+        self.activity_text.tag_configure("title", font=("Segoe UI", 12, "bold"), foreground="#ff6b00")
+        self.activity_text.tag_configure("feature", font=("Segoe UI", 10), foreground="#FFFFFF")
+        
+        # Insert formatted welcome text
+        welcome_text = (
+            "Welcome to the Dashboard! 🚀\n\n"
+            "• Take control of your Windows system with ease and efficiency\n"
+            "• Access to Package Management, Tweaks, Monitoring, and so much more!\n"
+        )
+        
+        self.activity_text.insert(tk.END, welcome_text.split('\n')[0], "title")
+        self.activity_text.insert(tk.END, '\n\n')
+        for line in welcome_text.split('\n')[2:]:
+            self.activity_text.insert(tk.END, line + '\n', "feature")
+            
         self.activity_text.config(state=tk.DISABLED)
 
     def create_action_button(self, parent, text, description, command):
@@ -1389,6 +1959,24 @@ class WinTool:
 
     def run(self):
         self.root.mainloop()
+
+    def start_move(self, event):
+        self.x = event.x
+        self.y = event.y
+
+    def do_move(self, event):
+        deltax = event.x - self.x
+        deltay = event.y - self.y
+        x = self.root.winfo_x() + deltax
+        y = self.root.winfo_y() + deltay
+        self.root.geometry(f"+{x}+{y}")
+
+    def on_move(self, event):
+        deltax = event.x - self.x
+        deltay = event.y - self.y
+        x = self.root.winfo_x() + deltax
+        y = self.root.winfo_y() + deltay
+        self.root.geometry(f"+{x}+{y}")
 
 if __name__ == "__main__":
     root = tk.Tk()

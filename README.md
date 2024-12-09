@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🛠️ MTech WinTool Beta Version 0.0.4a
+# 🛠️ MTech WinTool Beta Version 0.0.5a
 
-[![Python](https://img.shields.io/badge/Python-3.7+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=for-the-badge)](https://github.com/yourusername/MTechWinTool)
@@ -29,7 +29,7 @@
 ### Option 1: Direct Download (Recommended)
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.4a/MTech_WinTool.exe -OutFile MTechWinTool.exe; Start-Process .\\MTechWinTool.exe
+Invoke-WebRequest -Uri https://github.com/MTechWare/wintools/releases/download/v0.0.5a/MTech_WinTool.exe -OutFile MTechWinTool.exe; Start-Process .\\MTechWinTool.exe
 ```
 
 ### Option 2: From Releases
@@ -64,6 +64,19 @@ python main.py
   - Common system tasks
   - Frequently used tools
   - System shortcuts
+</details>
+
+<details>
+<summary><b>(NEW!)⚡ Tweaks</b></summary>
+
+- **Performance Optimization**
+  - System tweaks for better performance
+  - Gaming optimizations
+  - Power settings customization
+- **Privacy Settings**
+  - Windows telemetry controls
+  - Privacy-focused configurations
+  - App permissions management
 </details>
 
 <details>
